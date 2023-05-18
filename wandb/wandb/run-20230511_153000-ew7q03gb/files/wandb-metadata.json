@@ -1,0 +1,48 @@
+{
+    "os": "Windows-10-10.0.19044-SP0",
+    "python": "3.8.10",
+    "heartbeatAt": "2023-05-11T13:30:02.158865",
+    "startedAt": "2023-05-11T13:30:00.333199",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "data=perov",
+        "expname=perov",
+        "+HYDRA_FULL_ERROR=1"
+    ],
+    "state": "running",
+    "program": "C:\\Users\\GrzegorzKaszuba\\PycharmProjects\\cdvae-main\\cdvae\\run.py",
+    "codePath": "..\\..\\..\\..\\cdvae\\run.py",
+    "host": "DESKTOP-9VA4D09",
+    "username": "GrzegorzKaszuba",
+    "executable": "C:\\Users\\GrzegorzKaszuba\\AppData\\Local\\Programs\\Python\\Python38\\python.exe",
+    "cpu_count": 8,
+    "cpu_count_logical": 16,
+    "cpu_freq": {
+        "current": 2304.0,
+        "min": 0.0,
+        "max": 2304.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 2304.0,
+            "min": 0.0,
+            "max": 2304.0
+        }
+    ],
+    "disk": {
+        "total": 474.28905868530273,
+        "used": 292.571475982666
+    },
+    "gpu": "NVIDIA T600 Laptop GPU",
+    "gpu_count": 1,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA T600 Laptop GPU",
+            "memory_total": 4294967296
+        }
+    ],
+    "memory": {
+        "total": 31.744884490966797
+    }
+}
