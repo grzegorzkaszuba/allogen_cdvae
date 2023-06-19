@@ -104,6 +104,8 @@ def run(cfg: DictConfig) -> None:
         _recursive_=False,
     )
 
+    print(f'Model params: {model.num_params}')
+
     # Pass scaler from datamodule to model
     hydra.utils.log.info(f"Passing scaler from datamodule to model <{datamodule.scaler}>")
     model.lattice_scaler = datamodule.lattice_scaler.copy()
@@ -114,7 +116,7 @@ def run(cfg: DictConfig) -> None:
     callbacks: List[Callback] = build_callbacks(cfg=cfg)
 
     # Logger instantiation/configuration
-    wandb_logger = None
+    wandb_logger = True #actually creates a tensorboard logger
     if "wandb" in cfg.logging:
         hydra.utils.log.info("Instantiating <WandbLogger>")
         wandb_config = cfg.logging.wandb

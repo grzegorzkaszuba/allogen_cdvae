@@ -1,7 +1,7 @@
 _target_: cdvae.pl_modules.model.CrystGNN_Supervise
 use_orientation: false
-hidden_dim: 128
-fc_num_layers: 4
+hidden_dim: 64
+fc_num_layers: 3
 use_pe: false
 
 

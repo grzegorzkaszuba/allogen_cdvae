@@ -22,7 +22,7 @@ hydra:
 defaults:
   - data: default
   - logging: default
-  - model: vae
+  - model: supervise
   - optim: default
   - train: default
 #    Decomment this parameter to get parallel job running

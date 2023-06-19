@@ -78,6 +78,8 @@ def log_hyperparameters(
     )
 
     # send hparams to all loggers
+
+
     trainer.logger.log_hyperparams(hparams)
 
     # disable logging any more hyperparameters for all loggers

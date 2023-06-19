@@ -7,7 +7,7 @@ from torch_scatter import scatter
 from torch_geometric.nn.acts import swish
 from torch_geometric.nn.inits import glorot_orthogonal
 from torch_geometric.nn.models.dimenet import (
-    BesselBasisLayer,
+    BesselBasisLayer as BesselBasisLayer_pt1x,
     EmbeddingBlock,
     ResidualLayer,
     SphericalBasisLayer,
@@ -25,6 +25,14 @@ try:
     import sympy as sym
 except ImportError:
     sym = None
+
+from math import pi as PI
+
+class BesselBasisLayer(BesselBasisLayer_pt1x):
+    def reset_parameters(self):
+        with torch.no_grad():
+            torch.arange(1, self.freq.numel() + 1, out=self.freq).mul_(PI)
+        self.freq.requires_grad_()
 
 
 class InteractionPPBlock(torch.nn.Module):

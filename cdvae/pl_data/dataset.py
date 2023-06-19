@@ -18,10 +18,15 @@ class CrystDataset(Dataset):
                  graph_method: ValueNode, preprocess_workers: ValueNode,
                  lattice_scale_method: ValueNode,
                  **kwargs):
+
+        if 'preprocess_limit' in kwargs:
+            preprocess_limit = kwargs.get('preprocess_limit')
+        else:
+            preprocess_limit = None
         super().__init__()
         self.path = path
         self.name = name
-        self.df = pd.read_csv(path)
+        self.df = pd.read_csv(path)[:preprocess_limit]
         self.prop = prop
         self.niggli = niggli
         self.primitive = primitive
@@ -34,7 +39,8 @@ class CrystDataset(Dataset):
             niggli=self.niggli,
             primitive=self.primitive,
             graph_method=self.graph_method,
-            prop_list=[prop])
+            prop_list=[prop],
+            preprocess_limit=preprocess_limit)
 
         add_scaled_lattice_prop(self.cached_data, lattice_scale_method)
         self.lattice_scaler = None

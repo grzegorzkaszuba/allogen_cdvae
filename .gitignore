@@ -216,3 +216,6 @@ fabric.properties
 
 # .DS_Store
 .DS_Store
+
+# No wandb logging
+wandb/

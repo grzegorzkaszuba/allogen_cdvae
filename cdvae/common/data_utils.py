@@ -648,8 +648,8 @@ def get_scaler_from_data_list(data_list, key):
 
 
 def preprocess(input_file, num_workers, niggli, primitive, graph_method,
-               prop_list):
-    df = pd.read_csv(input_file)
+               prop_list, preprocess_limit):
+    df = pd.read_csv(input_file)[:preprocess_limit]
 
     def process_one(row, niggli, primitive, graph_method, prop_list):
         crystal_str = row['cif']
@@ -700,6 +700,7 @@ def preprocess_tensors(crystal_array_list, niggli, primitive, graph_method):
         }
         return result_dict
 
+    process_one(0, crystal_array_list[0], niggli, primitive, graph_method)
     unordered_results = p_umap(
         process_one,
         list(range(len(crystal_array_list))),
@@ -707,7 +708,7 @@ def preprocess_tensors(crystal_array_list, niggli, primitive, graph_method):
         [niggli] * len(crystal_array_list),
         [primitive] * len(crystal_array_list),
         [graph_method] * len(crystal_array_list),
-        num_cpus=30,
+        num_cpus=4,
     )
     ordered_results = list(
         sorted(unordered_results, key=lambda x: x['batch_idx']))

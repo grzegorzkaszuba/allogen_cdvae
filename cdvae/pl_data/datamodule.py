@@ -97,6 +97,90 @@ class CrystDataModule(pl.LightningDataModule):
                 test_dataset.lattice_scaler = self.lattice_scaler
                 test_dataset.scaler = self.scaler
 
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            shuffle=True,
+            batch_size=self.batch_size.train,
+            num_workers=self.num_workers.train,
+            worker_init_fn=worker_init_fn,
+        )
+
+    def val_dataloader(self) -> Sequence[DataLoader]:
+        return [
+            DataLoader(
+                dataset,
+                shuffle=False,
+                batch_size=self.batch_size.val,
+                num_workers=self.num_workers.val,
+                worker_init_fn=worker_init_fn,
+            )
+            for dataset in self.val_datasets
+        ]
+
+    def test_dataloader(self) -> Sequence[DataLoader]:
+        return [
+            DataLoader(
+                dataset,
+                shuffle=False,
+                batch_size=self.batch_size.test,
+                num_workers=self.num_workers.test,
+                worker_init_fn=worker_init_fn,
+            )
+            for dataset in self.test_datasets
+        ]
+
+class CrystDataModuleNH(pl.LightningDataModule):
+    def __init__(
+            self,
+            datasets: dict,# dict of 3 list train/test/val
+            num_workers,
+            batch_size,
+            scaler_path=None,
+    ):
+        super().__init__()
+        self.datasets = datasets
+        self.num_workers = num_workers
+        self.batch_size = batch_size
+
+        self.train_dataset: Optional[Dataset] = datasets['train']
+        self.val_datasets: Optional[Sequence[Dataset]] = datasets['val']
+        self.test_datasets: Optional[Sequence[Dataset]] = datasets['test']
+
+        if scaler_path is None:
+            raise Warning("CrystDataModuleNH is for reconstructed data - you should pass a path to an already existing scaler!")
+        self.get_scaler(scaler_path)
+
+    def prepare_data(self) -> None:
+        # download only
+        pass
+
+    def get_scaler(self, scaler_path):
+        # Load once to compute property scaler
+        if scaler_path is None:
+            pass
+        else:
+            self.lattice_scaler = torch.load(
+                Path(scaler_path) / 'lattice_scaler.pt')
+            self.scaler = torch.load(Path(scaler_path) / 'prop_scaler.pt')
+
+    def setup(self, stage: Optional[str] = None):
+        """
+        construct datasets and assign data scalers.
+        """
+        if stage is None or stage == "fit":
+            self.train_dataset.lattice_scaler = self.lattice_scaler
+            self.train_dataset.scaler = self.scaler
+            for val_dataset in self.val_datasets:
+                val_dataset.lattice_scaler = self.lattice_scaler
+                val_dataset.scaler = self.scaler
+
+        if stage is None or stage == "test":
+            for test_dataset in self.test_datasets:
+                test_dataset.lattice_scaler = self.lattice_scaler
+                test_dataset.scaler = self.scaler
+
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
             self.train_dataset,

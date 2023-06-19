@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from torch_geometric.data import Batch
 
-from eval_utils import load_model
+from eval_utils import load_model, load_model_full
 
 
 def reconstructon(loader, model, ld_kwargs, num_evals,
@@ -26,6 +26,8 @@ def reconstructon(loader, model, ld_kwargs, num_evals,
     input_data_list = []
 
     for idx, batch in enumerate(loader):
+        if idx >= 2:
+            continue
         if torch.cuda.is_available():
             batch.cuda()
         print(f'batch {idx} in {len(loader)}')
@@ -66,7 +68,7 @@ def reconstructon(loader, model, ld_kwargs, num_evals,
             all_atom_types_stack.append(
                 torch.stack(batch_all_atom_types, dim=0))
         # Save the ground truth structure
-        input_data_list = input_data_list + batch.to_data_list()
+        #input_data_list = input_data_list + batch.to_data_list()
 
     frac_coords = torch.cat(frac_coords, dim=1)
     num_atoms = torch.cat(num_atoms, dim=1)
@@ -76,8 +78,8 @@ def reconstructon(loader, model, ld_kwargs, num_evals,
     if ld_kwargs.save_traj:
         all_frac_coords_stack = torch.cat(all_frac_coords_stack, dim=2)
         all_atom_types_stack = torch.cat(all_atom_types_stack, dim=2)
-    input_data_batch = Batch.from_data_list(input_data_list)
-
+    #input_data_batch = Batch.from_data_list(input_data_list)
+    input_data_batch = None
     return (
         frac_coords, num_atoms, atom_types, lengths, angles,
         all_frac_coords_stack, all_atom_types_stack, input_data_batch)
@@ -172,6 +174,38 @@ def optimization(model, ld_kwargs, data_loader,
             ['frac_coords', 'atom_types', 'num_atoms', 'lengths', 'angles']}
 
 
+
+def test_prop_fc(model, ld_kwargs, data_loader,
+                 num_starting_points=100, num_gradient_steps=5000,
+                 lr=1e-3, num_saved_crys=10):
+    if data_loader is not None:
+        batch = next(iter(data_loader)).to(model.device)
+        _, _, z = model.encode(batch)
+        z = z[:num_starting_points].detach().clone()
+        z.requires_grad = True
+    else:
+        z = torch.randn(num_starting_points, model.hparams.hidden_dim,
+                        device=model.device)
+        z.requires_grad = True
+
+    opt = Adam([z], lr=lr)
+    model.freeze()
+
+    all_crystals = []
+    interval = num_gradient_steps // (num_saved_crys-1)
+    for i in tqdm(range(num_gradient_steps)):
+        opt.zero_grad()
+        loss = model.fc_property(z).mean()
+        loss.backward()
+        opt.step()
+
+        if i % interval == 0 or i == (num_gradient_steps-1):
+            crystals = model.langevin_dynamics(z, ld_kwargs)
+            all_crystals.append(crystals)
+    return {k: torch.cat([d[k] for d in all_crystals]).unsqueeze(0) for k in
+            ['frac_coords', 'atom_types', 'num_atoms', 'lengths', 'angles']}
+
+
 def main(args):
     # load_data if do reconstruction.
     model_path = Path(args.model_path)
@@ -236,7 +270,8 @@ def main(args):
             'angles': angles,
             'all_frac_coords_stack': all_frac_coords_stack,
             'all_atom_types_stack': all_atom_types_stack,
-            'time': time.time() - start_time
+            'time': time.time() - start_time,
+            'ld_kwargs': ld_kwargs
         }, model_path / gen_out_name)
 
     if 'opt' in args.tasks:
@@ -267,7 +302,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_traj', default=False, type=bool)
     parser.add_argument('--disable_bar', default=False, type=bool)
     parser.add_argument('--num_evals', default=1, type=int)
-    parser.add_argument('--num_batches_to_samples', default=20, type=int)
+    parser.add_argument('--num_batches_to_samples', default=1, type=int)
     parser.add_argument('--start_from', default='data', type=str)
     parser.add_argument('--batch_size', default=500, type=int)
     parser.add_argument('--force_num_atoms', action='store_true')
@@ -276,5 +311,6 @@ if __name__ == '__main__':
     parser.add_argument('--label', default='')
 
     args = parser.parse_args()
-
+    print('Tasks:', args.tasks)
+    print('Path to model:', args.model_path)
     main(args)

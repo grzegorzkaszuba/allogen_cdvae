@@ -46,7 +46,7 @@ data:
         primitive: ${data.primitive}
         graph_method: ${data.graph_method}
         lattice_scale_method: ${data.lattice_scale_method}
-        preprocess_workers: ${data.preprocess_workers}
+        preprocess_workers:
     num_workers:
       train: 0
       val: 0
@@ -129,6 +129,7 @@ optim:
     - 0.999
     eps: 1.0e-08
     weight_decay: 0
+    capturable: true
   use_lr_scheduler: true
   lr_scheduler:
     _target_: torch.optim.lr_scheduler.ReduceLROnPlateau

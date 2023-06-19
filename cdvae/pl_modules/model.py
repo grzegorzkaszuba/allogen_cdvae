@@ -43,6 +43,10 @@ class BaseModule(pl.LightningModule):
         )
         return {"optimizer": opt, "lr_scheduler": scheduler, "monitor": "train_loss"}
 
+    @property
+    def num_params(self):
+        return sum(p.numel() for p in self.parameters())
+
 
 class CrystGNN_Supervise(BaseModule):
     """
@@ -460,7 +464,9 @@ class CDVAE(BaseModule):
         return pred_lengths_and_angles, pred_lengths, pred_angles
 
     def predict_composition(self, z, num_atoms):
+        print(z.shape, num_atoms)
         z_per_atom = z.repeat_interleave(num_atoms, dim=0)
+        print(z_per_atom.shape)
         pred_composition_per_atom = self.fc_composition(z_per_atom)
         return pred_composition_per_atom
 

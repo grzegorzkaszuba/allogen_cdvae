@@ -15,9 +15,11 @@ from smact.screening import pauling_test
 from cdvae.common.constants import CompScalerMeans, CompScalerStds
 from cdvae.common.data_utils import StandardScaler, chemical_symbols
 from cdvae.pl_data.dataset import TensorCrystDataset
-from cdvae.pl_data.datamodule import worker_init_fn
+from cdvae.pl_data.datamodule import worker_init_fn, CrystDataModuleNH
 
 from torch_geometric.data import DataLoader
+
+import os
 
 CompScaler = StandardScaler(
     means=np.array(CompScalerMeans),
@@ -86,6 +88,60 @@ def load_model(model_path, load_data=False, testing=True):
 
     return model, test_loader, cfg
 
+
+def load_model_full(model_path):
+    with initialize_config_dir(str(model_path)):
+        cfg = compose(config_name='hparams')
+        model = hydra.utils.instantiate(
+            cfg.model,
+            optim=cfg.optim,
+            data=cfg.data,
+            logging=cfg.logging,
+            _recursive_=False,
+        )
+        ckpts = list(model_path.glob('*.ckpt'))
+        if len(ckpts) > 0:
+            ckpt_epochs = np.array(
+                [int(ckpt.parts[-1].split('-')[0].split('=')[1]) for ckpt in ckpts])
+            ckpt = str(ckpts[ckpt_epochs.argsort()[-1]])
+        model = model.load_from_checkpoint(ckpt)
+        model.lattice_scaler = torch.load(model_path / 'lattice_scaler.pt')
+        model.scaler = torch.load(model_path / 'prop_scaler.pt')
+
+        datamodule = hydra.utils.instantiate(
+            cfg.data.datamodule, _recursive_=False, scaler_path=model_path
+        )
+        datamodule.setup()
+        train_loader = datamodule.train_dataloader()
+        val_loader = datamodule.val_dataloader()[0]
+        test_loader = datamodule.test_dataloader()[0]
+
+    return model, [train_loader, val_loader, test_loader], cfg
+
+
+def load_tensor_data(model_path, data_name = 'eval_recon.pt'):
+    with initialize_config_dir(str(model_path)):
+        cfg = compose(config_name='hparams')
+        tensor_data = torch.load(os.path.join(model_path, data_name))
+        test_dataset = TensorCrystDataset([tensor_data],
+                                          cfg.data.datamodule.datasets.train.niggli,
+                                          cfg.data.datamodule.datasets.train.primitive,
+                                          cfg.data.datamodule.datasets.train.graph_method,
+                                          cfg.data.datamodule.datasets.train.preprocess_workers,
+                                          cfg.data.datamodule.datasets.train.lattice_scale_method)
+
+        datasets = {'train': None,
+                    'val': None,
+                    'test': [test_dataset]}
+
+        datamodule = CrystDataModuleNH(datasets,
+                                    cfg.data.datamodule.num_workers,
+                                    cfg.data.datamodule.batch_size,
+                                    model_path)
+
+        datamodule.setup()
+        loader = datamodule.test_dataloader()
+        return loader
 
 def get_crystals_list(
         frac_coords, atom_types, lengths, angles, num_atoms):
@@ -208,7 +264,8 @@ def prop_model_eval(eval_model_name, crystal_array_list):
     for batch in loader:
         preds = model(batch)
         model.scaler.match_device(preds)
-        scaled_preds = model.scaler.inverse_transform(preds)
+        #scaled_preds = model.scaler.inverse_transform(preds)
+        scaled_preds = preds
         all_preds.append(scaled_preds.detach().cpu().numpy())
 
     all_preds = np.concatenate(all_preds, axis=0).squeeze(1)
