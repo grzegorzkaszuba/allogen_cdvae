@@ -1,0 +1,43 @@
+213,FeCr60_8,-63.3374401941258, 189.527222205556,FeCr60,"# generated using pymatgen
+ data_Cr9Fe7
+_symmetry_space_group_name_H-M   'P 1'
+_cell_length_a   4.97803174
+_cell_length_b   4.97803174
+_cell_length_c   7.04000000
+_cell_angle_alpha   90.00000000
+_cell_angle_beta   90.00000000
+_cell_angle_gamma   90.00000000
+_symmetry_Int_Tables_number   1
+_chemical_formula_structural   Cr9Fe7
+_chemical_formula_sum   'Cr9 Fe7'
+_cell_volume   174.45683200
+_cell_formula_units_Z   1
+loop_
+ _symmetry_equiv_pos_site_id
+ _symmetry_equiv_pos_as_xyz
+  1  'x, y, z'
+loop_
+ _atom_site_type_symbol
+ _atom_site_label
+ _atom_site_symmetry_multiplicity
+ _atom_site_fract_x
+ _atom_site_fract_y
+ _atom_site_fract_z
+ _atom_site_occupancy
+  Fe  Fe0  1  0.00000000  0.00000000  0.00287700  1
+  Cr  Cr1  1  0.24754769  0.24818301  0.24971075  1
+  Fe  Fe2  1  0.00000000  0.00000000  0.49722453  1
+  Cr  Cr3  1  0.24837011  0.24819705  0.75069487  1
+  Cr  Cr4  1  0.00000000  0.50000000  0.00082375  1
+  Fe  Fe5  1  0.25074692  0.74995117  0.24820604  1
+  Fe  Fe6  1  0.00000000  0.50000000  0.49762712  1
+  Cr  Cr7  1  0.24849529  0.75167440  0.75070788  1
+  Fe  Fe8  1  0.50000000  0.00000000  0.00258482  1
+  Fe  Fe9  1  0.74925308  0.25004883  0.24820604  1
+  Cr  Cr10  1  0.50000000  0.00000000  0.49875273  1
+  Cr  Cr11  1  0.75150471  0.24832560  0.75070788  1
+  Fe  Fe12  1  0.50000000  0.50000000  0.00213770  1
+  Cr  Cr13  1  0.75245231  0.75181699  0.24971075  1
+  Cr  Cr14  1  0.50000000  0.50000000  0.49933326  1
+  Cr  Cr15  1  0.75162989  0.75180295  0.75069487  1
+" 

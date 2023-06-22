@@ -1,0 +1,43 @@
+193,NiCr70_3,-62.2679543379135, 138.654164428879,NiCr70,"# generated using pymatgen
+ data_Cr11Ni5
+_symmetry_space_group_name_H-M   'P 1'
+_cell_length_a   4.97803174
+_cell_length_b   4.97803174
+_cell_length_c   7.04000000
+_cell_angle_alpha   90.00000000
+_cell_angle_beta   90.00000000
+_cell_angle_gamma   90.00000000
+_symmetry_Int_Tables_number   1
+_chemical_formula_structural   Cr11Ni5
+_chemical_formula_sum   'Cr11 Ni5'
+_cell_volume   174.45683200
+_cell_formula_units_Z   1
+loop_
+ _symmetry_equiv_pos_site_id
+ _symmetry_equiv_pos_as_xyz
+  1  'x, y, z'
+loop_
+ _atom_site_type_symbol
+ _atom_site_label
+ _atom_site_symmetry_multiplicity
+ _atom_site_fract_x
+ _atom_site_fract_y
+ _atom_site_fract_z
+ _atom_site_occupancy
+  Ni  Ni0  1  0.00170310  0.99833953  0.00157046  1
+  Ni  Ni1  1  0.24625604  0.25000000  0.24631325  1
+  Cr  Cr2  1  0.00161137  0.99866112  0.49851934  1
+  Cr  Cr3  1  0.24726923  0.25000000  0.75302172  1
+  Ni  Ni4  1  0.00170310  0.50166047  0.00157046  1
+  Ni  Ni5  1  0.24652759  0.75000000  0.24708437  1
+  Cr  Cr6  1  0.00161137  0.50133888  0.49851934  1
+  Cr  Cr7  1  0.24708184  0.75000000  0.75284794  1
+  Cr  Cr8  1  0.49859219  0.99852096  0.00147511  1
+  Cr  Cr9  1  0.75256631  0.25000000  0.24656991  1
+  Cr  Cr10  1  0.49865983  0.99874743  0.49854408  1
+  Cr  Cr11  1  0.75290109  0.25000000  0.75293416  1
+  Cr  Cr12  1  0.49859219  0.50147904  0.00147511  1
+  Cr  Cr13  1  0.75270571  0.75000000  0.24749191  1
+  Cr  Cr14  1  0.49865983  0.50125257  0.49854408  1
+  Ni  Ni15  1  0.75355921  0.75000000  0.75351873  1
+" 

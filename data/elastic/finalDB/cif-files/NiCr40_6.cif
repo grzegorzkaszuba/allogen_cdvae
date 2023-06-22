@@ -1,0 +1,43 @@
+9,NiCr40_6,-66.48930695377, 144.018046653101,NiCr40,"# generated using pymatgen
+ data_Cr3Ni5
+_symmetry_space_group_name_H-M   'P 1'
+_cell_length_a   4.97803174
+_cell_length_b   4.97803174
+_cell_length_c   7.04000000
+_cell_angle_alpha   90.00000000
+_cell_angle_beta   90.00000000
+_cell_angle_gamma   90.00000000
+_symmetry_Int_Tables_number   1
+_chemical_formula_structural   Cr3Ni5
+_chemical_formula_sum   'Cr6 Ni10'
+_cell_volume   174.45683200
+_cell_formula_units_Z   2
+loop_
+ _symmetry_equiv_pos_site_id
+ _symmetry_equiv_pos_as_xyz
+  1  'x, y, z'
+loop_
+ _atom_site_type_symbol
+ _atom_site_label
+ _atom_site_symmetry_multiplicity
+ _atom_site_fract_x
+ _atom_site_fract_y
+ _atom_site_fract_z
+ _atom_site_occupancy
+  Cr  Cr0  1  0.99713210  0.00265600  0.00266547  1
+  Ni  Ni1  1  0.25289431  0.25000000  0.25000000  1
+  Ni  Ni2  1  0.99698847  0.00325396  0.49704737  1
+  Cr  Cr3  1  0.25350002  0.25000000  0.75000000  1
+  Ni  Ni4  1  0.99698847  0.49674604  0.00295263  1
+  Cr  Cr5  1  0.25286760  0.75000000  0.25000000  1
+  Cr  Cr6  1  0.99713210  0.49734400  0.49733453  1
+  Cr  Cr7  1  0.25224055  0.75000000  0.75000000  1
+  Ni  Ni8  1  0.50296893  0.00272704  0.00249047  1
+  Ni  Ni9  1  0.74677296  0.25000000  0.25000000  1
+  Ni  Ni10  1  0.50317326  0.00337919  0.49691329  1
+  Ni  Ni11  1  0.74745835  0.25000000  0.75000000  1
+  Ni  Ni12  1  0.50317326  0.49662081  0.00308671  1
+  Ni  Ni13  1  0.74711774  0.75000000  0.25000000  1
+  Ni  Ni14  1  0.50296893  0.49727296  0.49750953  1
+  Cr  Cr15  1  0.74662295  0.75000000  0.75000000  1
+" 
