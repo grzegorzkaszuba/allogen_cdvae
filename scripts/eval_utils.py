@@ -236,6 +236,23 @@ def get_fp_pdist(fp_array):
     return fp_pdists.mean()
 
 
+
+def get_cryst_loader(crystal_array_list, cfg, scaler):
+    dataset = TensorCrystDataset(
+        crystal_array_list, cfg.data.niggli, cfg.data.primitive,
+        cfg.data.graph_method, cfg.data.preprocess_workers,
+        cfg.data.lattice_scale_method)
+
+    dataset.scaler = scaler.copy()
+
+    loader = DataLoader(
+        dataset,
+        shuffle=False,
+        batch_size=128,
+        num_workers=0,
+        worker_init_fn=worker_init_fn)
+    return loader
+
 def prop_model_eval(eval_model_name, crystal_array_list):
 
     model_path = get_model_path(eval_model_name)
@@ -340,3 +357,6 @@ def compute_cov(crys, gt_crys,
     }
 
     return metrics_dict, combined_dist_dict
+
+
+

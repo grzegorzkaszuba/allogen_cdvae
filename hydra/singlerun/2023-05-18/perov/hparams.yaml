@@ -27,6 +27,7 @@ data:
         graph_method: ${data.graph_method}
         lattice_scale_method: ${data.lattice_scale_method}
         preprocess_workers: ${data.preprocess_workers}
+        preprocess_limit: 3000
       val:
       - _target_: cdvae.pl_data.dataset.CrystDataset
         name: Formation energy val
@@ -37,6 +38,7 @@ data:
         graph_method: ${data.graph_method}
         lattice_scale_method: ${data.lattice_scale_method}
         preprocess_workers: ${data.preprocess_workers}
+        preprocess_limit: 3000
       test:
       - _target_: cdvae.pl_data.dataset.CrystDataset
         name: Formation energy test
@@ -47,6 +49,7 @@ data:
         graph_method: ${data.graph_method}
         lattice_scale_method: ${data.lattice_scale_method}
         preprocess_workers:
+        preprocess_limit: 3000
     num_workers:
       train: 0
       val: 0

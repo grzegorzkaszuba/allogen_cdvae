@@ -111,18 +111,33 @@ class TensorCrystDataset(Dataset):
         # atom_coords are fractional coordinates
         # edge_index is incremented during batching
         # https://pytorch-geometric.readthedocs.io/en/latest/notes/batching.html
-        data = Data(
-            frac_coords=torch.Tensor(frac_coords),
-            atom_types=torch.LongTensor(atom_types),
-            lengths=torch.Tensor(lengths).view(1, -1),
-            angles=torch.Tensor(angles).view(1, -1),
-            edge_index=torch.LongTensor(
-                edge_indices.T).contiguous(),  # shape (2, num_edges)
-            to_jimages=torch.LongTensor(to_jimages),
-            num_atoms=num_atoms,
-            num_bonds=edge_indices.shape[0],
-            num_nodes=num_atoms,  # special attribute used for batching in pytorch geometric
-        )
+        if 'y' not in data_dict.keys():
+            data = Data(
+                frac_coords=torch.Tensor(frac_coords),
+                atom_types=torch.LongTensor(atom_types),
+                lengths=torch.Tensor(lengths).view(1, -1),
+                angles=torch.Tensor(angles).view(1, -1),
+                edge_index=torch.LongTensor(
+                    edge_indices.T).contiguous(),  # shape (2, num_edges)
+                to_jimages=torch.LongTensor(to_jimages),
+                num_atoms=num_atoms,
+                num_bonds=edge_indices.shape[0],
+                num_nodes=num_atoms,  # special attribute used for batching in pytorch geometric
+            )
+        else:
+            data = Data(
+                frac_coords=torch.Tensor(frac_coords),
+                atom_types=torch.LongTensor(atom_types),
+                lengths=torch.Tensor(lengths).view(1, -1),
+                angles=torch.Tensor(angles).view(1, -1),
+                edge_index=torch.LongTensor(
+                    edge_indices.T).contiguous(),  # shape (2, num_edges)
+                to_jimages=torch.LongTensor(to_jimages),
+                num_atoms=num_atoms,
+                num_bonds=edge_indices.shape[0],
+                num_nodes=num_atoms,  # special attribute used for batching in pytorch geometric
+                y=torch.Tensor(data_dict['y']).view(-1, 1)
+            )
         return data
 
     def __repr__(self) -> str:

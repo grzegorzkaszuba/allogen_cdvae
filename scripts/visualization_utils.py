@@ -4,6 +4,8 @@ from pymatgen.io.ase import AseAtomsAdaptor
 from pymatgen.core.periodic_table import Element
 from ase.visualize import view
 
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 
 def visualize_structure(lattice_lengths, lattice_angles, atom_numbers, atom_coords):
     # Convert atomic numbers to symbols
@@ -26,6 +28,35 @@ def visualize_structure(lattice_lengths, lattice_angles, atom_numbers, atom_coor
 
     # Visualize the structure
     view(structure_ase)
+
+
+
+def save_scatter_plot(pred, label, writer, name, plot_title=None):
+    if plot_title is None:
+        plot_title = name
+
+    plt.scatter(pred, label, s=1)
+
+    # Set the limits of x and y to be the same
+    min_val = min(min(pred), min(label))
+    max_val = max(max(pred), max(label))
+
+    plt.xlim(min_val, max_val)
+    plt.ylim(min_val, max_val)
+
+    # Add the line x = y
+    plt.plot([min_val, max_val], [min_val, max_val], 'r--')
+
+    # Set the aspect of the plot to be equal, so the scale is the same on x and y
+    plt.gca().set_aspect('equal', adjustable='box')
+
+    plt.xlabel('Prediction')
+    plt.ylabel('Label')
+
+    plt.title(plot_title)
+    writer.add_figure(name, plt.gcf(), 0)
+
+    plt.show()
 
 
 

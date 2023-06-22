@@ -687,6 +687,7 @@ def preprocess_tensors(crystal_array_list, niggli, primitive, graph_method):
         atom_types = crystal_array['atom_types']
         lengths = crystal_array['lengths']
         angles = crystal_array['angles']
+
         crystal = Structure(
             lattice=Lattice.from_parameters(
                 *(lengths.tolist() + angles.tolist())),
@@ -694,10 +695,18 @@ def preprocess_tensors(crystal_array_list, niggli, primitive, graph_method):
             coords=frac_coords,
             coords_are_cartesian=False)
         graph_arrays = build_crystal_graph(crystal, graph_method)
-        result_dict = {
-            'batch_idx': batch_idx,
-            'graph_arrays': graph_arrays,
-        }
+        if not 'y' in crystal_array.keys():
+            result_dict = {
+                'batch_idx': batch_idx,
+                'graph_arrays': graph_arrays,
+            }
+        else:
+            result_dict = {
+                'batch_idx': batch_idx,
+                'graph_arrays': graph_arrays,
+                'y': crystal_array['y']
+            }
+
         return result_dict
 
     process_one(0, crystal_array_list[0], niggli, primitive, graph_method)

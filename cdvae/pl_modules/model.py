@@ -464,9 +464,9 @@ class CDVAE(BaseModule):
         return pred_lengths_and_angles, pred_lengths, pred_angles
 
     def predict_composition(self, z, num_atoms):
-        print(z.shape, num_atoms)
+        #print(z.shape, num_atoms)
         z_per_atom = z.repeat_interleave(num_atoms, dim=0)
-        print(z_per_atom.shape)
+        #print(z_per_atom.shape)
         pred_composition_per_atom = self.fc_composition(z_per_atom)
         return pred_composition_per_atom
 

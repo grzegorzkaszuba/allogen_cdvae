@@ -1,5 +1,5 @@
-root_path: ${oc.env:PROJECT_ROOT}/data/perov_5
-prop: heat_ref
+root_path: ${oc.env:PROJECT_ROOT}/data/elastic
+prop: ealstic_vector
 num_targets: 1
 # prop: scaled_lattice
 # num_targets: 6
@@ -9,14 +9,14 @@ graph_method: crystalnn
 lattice_scale_method: scale_length
 preprocess_workers: 4
 readout: mean
-max_atoms: 20
+max_atoms: 54
 otf_graph: false
-eval_model_name: perovskite
+eval_model_name: carbon
 
 
-train_max_epochs: 3000
+train_max_epochs: 1000
 early_stopping_patience: 100000
-teacher_forcing_max_epoch: 1500
+teacher_forcing_max_epoch: 1000
 
 
 datamodule:
@@ -33,7 +33,6 @@ datamodule:
       graph_method: ${data.graph_method}
       lattice_scale_method: ${data.lattice_scale_method}
       preprocess_workers: ${data.preprocess_workers}
-      preprocess_limit: 300
 
     val:
       - _target_: cdvae.pl_data.dataset.CrystDataset
@@ -41,11 +40,11 @@ datamodule:
         path: ${data.root_path}/val.csv
         prop: ${data.prop}
         niggli: ${data.niggli}
-        primitive: ${data.primitive}e
+        primitive: ${data.primitive}
         graph_method: ${data.graph_method}
         lattice_scale_method: ${data.lattice_scale_method}
         preprocess_workers: ${data.preprocess_workers}
-        preprocess_limit: 300
+
     test:
       - _target_: cdvae.pl_data.dataset.CrystDataset
         name: Formation energy test
@@ -56,13 +55,13 @@ datamodule:
         graph_method: ${data.graph_method}
         lattice_scale_method: ${data.lattice_scale_method}
         preprocess_workers: ${data.preprocess_workers}
-        preprocess_limit: 300
+
   num_workers:
     train: 0
     val: 0
     test: 0
 
   batch_size:
-    train: 128
-    val: 64
-    test: 64
+    train: 16
+    val: 16
+    test: 16
