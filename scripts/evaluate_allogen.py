@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from torch_geometric.data import Batch
 
-from eval_utils import load_model, load_model_full, load_tensor_data, prop_model_eval, get_crystals_list, get_cryst_loader
+from eval_utils import load_model, load_model_full, load_tensor_data, prop_model_eval, get_crystals_list, get_cryst_loader, tensors_to_structures
 from visualization_utils import save_scatter_plot
 
 import tensorboard
@@ -289,7 +289,6 @@ def main(args):
     if 'bayesian_val' in args.tasks:
         print('Predict the properties on the validation set and assign uncertainty of those predictions\n',
               'Plot the uncertainties against the actual errors of the predictions')
-        print('safety1')
 
         train_property_labels = []
         train_encodings = []
@@ -364,13 +363,67 @@ def main(args):
         plt.scatter(ordered_uncertainty_score, ordered_mse)
         plt.show()
 
-        print('safety2')
 
 
 
 
-    if 'opt_prop' in args.tasks:
-        print('Optimize the structures with respect to the property module and check the correlation with the dec-prop pipeline')
+
+    if 'gen_cif' in args.tasks:
+        print('Generate structures from randomly created embeddings, create cif files and compute their properties')
+        start_time = time.time()
+
+        (frac_coords, num_atoms, atom_types, lengths, angles,
+         all_frac_coords_stack, all_atom_types_stack) = generation(
+            model, ld_kwargs, args.num_batches_to_samples, args.num_evals,
+            args.batch_size, args.down_sample_traj_step)
+
+        if args.label == '':
+            gen_out_name = 'eval_gen_cif.pt'
+        else:
+            gen_out_name = f'eval_gen_cif_{args.label}.pt'
+
+
+        gen_crystals_list = get_crystals_list(frac_coords[0],
+                                                atom_types[0],
+                                                lengths[0],
+                                                angles[0],
+                                                num_atoms[0])
+        retrain_loader = get_cryst_loader(gen_crystals_list, prop_cfg, prop_model.scaler, batch_size=args.batch_size)
+
+        predictions = []
+        for b in retrain_loader:
+            if torch.cuda.is_available():
+                b.cuda()
+            pred = prop_model(b)
+            properties = prop_model.scaler.inverse_transform(pred)
+            predictions.append(properties.detach().cpu())
+        predictions = torch.cat(predictions, dim=0)
+
+
+        torch.save({
+            'eval_setting': args,
+            'frac_coords': frac_coords,
+            'num_atoms': num_atoms,
+            'atom_types': atom_types,
+            'lengths': lengths,
+            'angles': angles,
+            'all_frac_coords_stack': all_frac_coords_stack,
+            'all_atom_types_stack': all_atom_types_stack,
+            'time': time.time() - start_time,
+            'ld_kwargs': ld_kwargs,
+            'predictions': predictions
+        }, model_path / gen_out_name)
+
+        cif_path = os.path.join(model_path, gen_out_name[:-3])
+
+        os.mkdir(cif_path)
+
+        structure_objects = tensors_to_structures(lengths[0], angles[0], frac_coords[0], atom_types[0], num_atoms[0])
+        for i, structure in enumerate(structure_objects):
+            # Write structure to CIF file
+            structure.to(filename=os.path.join(cif_path, f'generated {i}'), fmt='cif')
+
+
 
 
 if __name__ == '__main__':
@@ -384,7 +437,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_traj', default=False, type=bool)
     parser.add_argument('--disable_bar', default=False, type=bool)
     parser.add_argument('--num_evals', default=1, type=int)
-    parser.add_argument('--num_batches_to_samples', default=1, type=int)
+    parser.add_argument('--num_batches_to_samples', default=10, type=int)
     parser.add_argument('--start_from', default='data', type=str)
     parser.add_argument('--batch_size', default=500, type=int)
     parser.add_argument('--force_num_atoms', action='store_true')

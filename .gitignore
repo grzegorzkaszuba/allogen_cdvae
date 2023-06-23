@@ -219,3 +219,6 @@ fabric.properties
 
 # No wandb logging
 wandb/
+
+# leave conf alone
+conf/

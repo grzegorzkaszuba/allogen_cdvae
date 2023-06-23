@@ -21,6 +21,10 @@ from torch_geometric.data import DataLoader
 
 import os
 
+import torch
+from pymatgen.core import Structure, Lattice, Element
+import numpy as np
+
 CompScaler = StandardScaler(
     means=np.array(CompScalerMeans),
     stds=np.array(CompScalerStds),
@@ -237,7 +241,7 @@ def get_fp_pdist(fp_array):
 
 
 
-def get_cryst_loader(crystal_array_list, cfg, scaler):
+def get_cryst_loader(crystal_array_list, cfg, scaler, batch_size=128):
     dataset = TensorCrystDataset(
         crystal_array_list, cfg.data.niggli, cfg.data.primitive,
         cfg.data.graph_method, cfg.data.preprocess_workers,
@@ -248,7 +252,7 @@ def get_cryst_loader(crystal_array_list, cfg, scaler):
     loader = DataLoader(
         dataset,
         shuffle=False,
-        batch_size=128,
+        batch_size=batch_size,
         num_workers=0,
         worker_init_fn=worker_init_fn)
     return loader
@@ -358,5 +362,58 @@ def compute_cov(crys, gt_crys,
 
     return metrics_dict, combined_dist_dict
 
+
+
+
+def tensors_to_structures(lattice_params, lattice_angles, atom_coordinates, atom_types, num_atoms):
+    # Convert torch tensors to numpy arrays for use with pymatgen
+    lattice_params = lattice_params.numpy()
+    lattice_angles = lattice_angles.numpy()
+    atom_coordinates = atom_coordinates.numpy()
+    atom_types = atom_types.numpy()
+    num_atoms = num_atoms.numpy()
+
+    # Initialize list of structures
+    structures = []
+
+    # Initialize starting index for atoms
+    start_atom_idx = 0
+
+    # Iterate over structures
+    for i in range(lattice_params.shape[0]):
+        # Get lattice parameters and angles for this structure
+        params = lattice_params[i]
+        angles = lattice_angles[i]
+
+        # Get number of atoms in this structure
+        n_atoms = num_atoms[i]
+
+        # Get atom types and coordinates for this structure
+        types = atom_types[start_atom_idx : start_atom_idx + n_atoms]
+        coords = atom_coordinates[start_atom_idx : start_atom_idx + n_atoms]
+
+        # Convert atomic numbers to atomic symbols
+        atom_symbols = [Element.from_Z(Z).symbol for Z in types]
+
+        # Create a Lattice object from lattice vectors
+        lattice = Lattice.from_parameters(
+            a=params[0],
+            b=params[1],
+            c=params[2],
+            alpha=angles[0],
+            beta=angles[1],
+            gamma=angles[2]
+        )
+
+        # Create the Structure object
+        structure = Structure(lattice, atom_symbols, coords)
+
+        # Add structure to list
+        structures.append(structure)
+
+        # Update starting index for next structure
+        start_atom_idx += n_atoms
+
+    return structures
 
 
