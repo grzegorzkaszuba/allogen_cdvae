@@ -315,7 +315,7 @@ def main(args):
             'all_atom_types_stack': all_atom_types_stack,
             'ld_kwargs': ld_kwargs
         }, model_path / gen_out_name)
-
+    '''
     if 'bayesian_val' in args.tasks:
         print('Predict the properties on the validation set and assign uncertainty of those predictions\n',
               'Plot the uncertainties against the actual errors of the predictions')
@@ -392,7 +392,7 @@ def main(args):
         ordered_mse = squared_errors[uncertainty_asc]
         plt.scatter(ordered_uncertainty_score, ordered_mse)
         plt.show()
-
+    '''
 
 
     if 'gen_cif' in args.tasks:
