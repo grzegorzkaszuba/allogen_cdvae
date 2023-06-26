@@ -395,9 +395,6 @@ def main(args):
 
 
 
-
-
-
     if 'gen_cif' in args.tasks:
         print('Generate structures from randomly created embeddings, create cif files and compute their properties')
         start_time = time.time()
@@ -446,34 +443,28 @@ def main(args):
 
         cif_path = os.path.join(model_path, gen_out_name[:-3])
 
-        os.mkdir(cif_path)
+        os.makedirs(cif_path, exist_ok=True)
 
         structure_objects = tensors_to_structures(lengths[0], angles[0], frac_coords[0], atom_types[0], num_atoms[0])
         for i, structure in enumerate(structure_objects):
             # Write structure to CIF file
-            structure.to(filename=os.path.join(cif_path, f'generated{i}'), fmt='cif')
+            structure.to(filename=os.path.join(cif_path, f'generated{i}.cif'), fmt='cif')
 
     if 'opt_cif' in args.tasks:
-        print('Generate structures from randomly created embeddings, create cif files and compute their properties')
+        print('Optimize structures, capture optimization steps along with z and prop')
         initial_struct_loader = loaders[1]
+        extra_breakpoints = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 250, 350, 750]
+        opt_out, z, fc_properties, optimization_breakpoints = optimization(model, ld_kwargs, initial_struct_loader,
+                               num_starting_points=100, num_gradient_steps=5000,
+                               lr=1e-3, num_saved_crys=11, extra_returns=True,
+                                maximize=True, extra_breakpoints=extra_breakpoints)
 
-        opt_out = optimization(model, ld_kwargs, initial_struct_loader,
-                               num_starting_points=100, num_gradient_steps=100,
-                               lr=1e-3, num_saved_crys=10)
-
-
-        optimization_breakpoints = []
-        interval = 100 // (10 - 1)
-        for i in range(100):
-            if i % interval == 0 or i == (100-1):
-                optimization_breakpoints.append(i)
-
-        chonker = opt_chunk_generator(opt_out, 16)
+        chonker = opt_chunk_generator(opt_out, args.batch_size)
         task_path = os.path.join(model_path, 'opt_cif')
-        os.mkdir(task_path)
+        os.makedirs(task_path, exist_ok=True)
 
         for chunk, bp in zip(chonker, optimization_breakpoints):
-            cif_path = os.path.join(task_path, f'step{str(bp)}')
+            cif_path = os.path.join(task_path)
             os.makedirs(cif_path, exist_ok=True)
 
             torch.save({
@@ -484,15 +475,57 @@ def main(args):
                 'lengths': chunk['lengths'],
                 'angles': chunk['angles'],
                 'ld_kwargs': ld_kwargs,
+                'z': z,
+                'fc_properties': fc_properties
             }, os.path.join(cif_path, 'data.pt'))
 
             structure_objects = tensors_to_structures(chunk['lengths'][0], chunk['angles'][0], chunk['frac_coords'][0],
                                                       chunk['atom_types'][0], chunk['num_atoms'][0])
             for j, structure in enumerate(structure_objects):
                 # Write structure to CIF file
-                structure.to(filename=os.path.join(cif_path, f'generated{j}'), fmt='cif')
+                structure.to(filename=os.path.join(cif_path, f'generated{j}_step{bp}.cif'), fmt='cif')
 
+    if 'multi_opt_cif' in args.tasks:
+        n_batches = 2
+        for bb in range(n_batches):
 
+            print('Run opt_cif multiple times')
+            initial_struct_loader = loaders[1]
+            extra_breakpoints = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 250, 350, 750]
+            opt_out, z, fc_properties, optimization_breakpoints = optimization(model, ld_kwargs, initial_struct_loader,
+                                                                               num_starting_points=100,
+                                                                               num_gradient_steps=5000,
+                                                                               lr=1e-3, num_saved_crys=11,
+                                                                               extra_returns=True, maximize=True,
+                                                                               loader_shift=bb,
+                                                                               extra_breakpoints=extra_breakpoints)
+
+            chonker = opt_chunk_generator(opt_out, args.batch_size) # todo fetch actual batch size back from opt (or use num(join(intervals, extra_intervals)), else last odd batch will cause problems
+            task_path = os.path.join(model_path, f'multi_opt_cif_{bb}')
+            os.makedirs(task_path, exist_ok=True)
+
+            for chunk, bp in zip(chonker, optimization_breakpoints):
+                cif_path = os.path.join(task_path)
+                os.makedirs(cif_path, exist_ok=True)
+
+                torch.save({
+                    'eval_setting': args,
+                    'frac_coords': chunk['frac_coords'],
+                    'num_atoms': chunk['num_atoms'],
+                    'atom_types': chunk['atom_types'],
+                    'lengths': chunk['lengths'],
+                    'angles': chunk['angles'],
+                    'ld_kwargs': ld_kwargs,
+                    'z': z,
+                    'fc_properties': fc_properties
+                }, os.path.join(cif_path, 'data.pt'))
+
+                structure_objects = tensors_to_structures(chunk['lengths'][0], chunk['angles'][0],
+                                                          chunk['frac_coords'][0],
+                                                          chunk['atom_types'][0], chunk['num_atoms'][0])
+                for j, structure in enumerate(structure_objects):
+                    # Write structure to CIF file
+                    structure.to(filename=os.path.join(cif_path, f'generated{j}_step{bp}.cif'), fmt='cif')
 
 
 
