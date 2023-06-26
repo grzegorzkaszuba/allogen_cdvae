@@ -1,3 +1,4 @@
+'''
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern
@@ -28,3 +29,4 @@ def get_uncertainty(y_val: np.ndarray, x_val: np.ndarray, bayesian_optimizer: Ga
     p_values = 2 * norm.sf(abs(z_scores))
 
     return z_scores, p_values
+'''
