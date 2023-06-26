@@ -26,6 +26,36 @@ from gaussian_process import get_gaussian_regressor, get_uncertainty
 
 import numpy as np
 
+import copy
+
+
+def opt_chunk_generator(data, chunk_size):
+    # Create a deep copy of data and move tensors to CPU
+    data = {key: value.to('cpu').clone() for key, value in data.items()}
+
+    # Start indices for the chunks
+    start_indices = torch.arange(0, data['num_atoms'].numel(), chunk_size)
+    # Ensure that the last chunk includes all remaining graphs
+    if start_indices[-1] != data['num_atoms'].numel():
+        start_indices = torch.cat([start_indices, torch.tensor([data['num_atoms'].numel()])])
+
+    # Compute the end indices for the node attribute chunks
+    end_indices_atoms = torch.cat([torch.tensor([0]), torch.cumsum(data['num_atoms'].flatten(), dim=0)])
+
+    for start, end in zip(start_indices[:-1], start_indices[1:]):
+        chunk = {}
+        chunk['lengths'] = data['lengths'][:, start:end]
+        chunk['angles'] = data['angles'][:, start:end]
+        chunk['num_atoms'] = data['num_atoms'][:, start:end]
+
+        # Calculate start and end indices for the node attributes
+        start_atoms = end_indices_atoms[start].item()
+        end_atoms = end_indices_atoms[end].item()
+        chunk['frac_coords'] = data['frac_coords'][:, start_atoms:end_atoms]
+        chunk['atom_types'] = data['atom_types'][:, start_atoms:end_atoms]
+
+        yield chunk
+
 
 def test_prop_fc(model, ld_kwargs, data_loader,
                  num_starting_points=100, num_gradient_steps=5000,
@@ -68,7 +98,7 @@ def main(args):
         prop_model_path = Path(args.prop_model_path)
         prop_model, _, prop_cfg = load_model(prop_model_path)
         prop_model.to('cuda')
-    print('prop_model_parameters', count_parameters(prop_model))
+        print('prop_model_parameters', count_parameters(prop_model))
 
 
 
@@ -421,7 +451,48 @@ def main(args):
         structure_objects = tensors_to_structures(lengths[0], angles[0], frac_coords[0], atom_types[0], num_atoms[0])
         for i, structure in enumerate(structure_objects):
             # Write structure to CIF file
-            structure.to(filename=os.path.join(cif_path, f'generated {i}'), fmt='cif')
+            structure.to(filename=os.path.join(cif_path, f'generated{i}'), fmt='cif')
+
+    if 'opt_cif' in args.tasks:
+        print('Generate structures from randomly created embeddings, create cif files and compute their properties')
+        initial_struct_loader = loaders[1]
+
+        opt_out = optimization(model, ld_kwargs, initial_struct_loader,
+                               num_starting_points=100, num_gradient_steps=100,
+                               lr=1e-3, num_saved_crys=10)
+
+
+        optimization_breakpoints = []
+        interval = 100 // (10 - 1)
+        for i in range(100):
+            if i % interval == 0 or i == (100-1):
+                optimization_breakpoints.append(i)
+
+        chonker = opt_chunk_generator(opt_out, 16)
+        task_path = os.path.join(model_path, 'opt_cif')
+        os.mkdir(task_path)
+
+        for chunk, bp in zip(chonker, optimization_breakpoints):
+            cif_path = os.path.join(task_path, f'step{str(bp)}')
+            os.makedirs(cif_path, exist_ok=True)
+
+            torch.save({
+                'eval_setting': args,
+                'frac_coords': chunk['frac_coords'],
+                'num_atoms': chunk['num_atoms'],
+                'atom_types': chunk['atom_types'],
+                'lengths': chunk['lengths'],
+                'angles': chunk['angles'],
+                'ld_kwargs': ld_kwargs,
+            }, os.path.join(cif_path, 'data.pt'))
+
+            structure_objects = tensors_to_structures(chunk['lengths'][0], chunk['angles'][0], chunk['frac_coords'][0],
+                                                      chunk['atom_types'][0], chunk['num_atoms'][0])
+            for j, structure in enumerate(structure_objects):
+                # Write structure to CIF file
+                structure.to(filename=os.path.join(cif_path, f'generated{j}'), fmt='cif')
+
+
 
 
 

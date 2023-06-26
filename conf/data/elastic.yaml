@@ -11,7 +11,7 @@ preprocess_workers: 4
 readout: mean
 max_atoms: 54
 otf_graph: false
-eval_model_name: carbon
+eval_model_name: elastic
 
 
 train_max_epochs: 1000
