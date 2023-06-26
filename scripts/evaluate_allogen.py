@@ -22,7 +22,7 @@ import pytorch_lightning as pl
 
 from evaluate import reconstructon, generation, optimization
 
-from gaussian_process import get_gaussian_regressor, get_uncertainty
+#from gaussian_process import get_gaussian_regressor, get_uncertainty
 
 import numpy as np
 
