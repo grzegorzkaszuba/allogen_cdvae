@@ -9,11 +9,12 @@ from types import SimpleNamespace
 from torch_geometric.data import Batch
 
 from eval_utils import load_model, load_model_full, load_tensor_data, prop_model_eval, get_crystals_list, get_cryst_loader, tensors_to_structures
-from visualization_utils import save_scatter_plot
+from visualization_utils import save_scatter_plot, cif_names_list
 
 import tensorboard
 import os
 from torch.utils.tensorboard import SummaryWriter
+from pymatgen.io.cif import CifWriter
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
@@ -26,7 +27,82 @@ from evaluate import reconstructon, generation, optimization
 
 import numpy as np
 
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
+from torch.utils.data import ConcatDataset
 import copy
+
+
+
+def dictionary_cat(d, dim=0):
+    for k, v in d.items():
+        if type(v) == list:
+            if type(v[0]) == torch.Tensor:
+                d[k] = torch.cat(v, dim=dim)
+
+def optimization_by_batch(model, ld_kwargs, batch,
+                 num_starting_points=100, num_gradient_steps=5000,
+                 lr=1e-3, num_saved_crys=10, extra_returns=False, extra_breakpoints=(),
+                 maximize=False):
+    if batch is not None:
+        batch = batch.to(model.device)
+        _, _, z = model.encode(batch)
+        z = z[:num_starting_points].detach().clone()
+        z.requires_grad = True
+    else:
+        z = torch.randn(num_starting_points, model.hparams.hidden_dim,
+                        device=model.device)
+        z.requires_grad = True
+
+    opt = Adam([z], lr=lr)
+    model.freeze()
+
+    all_crystals = []
+    interval = num_gradient_steps // (num_saved_crys-1)
+    if extra_returns:
+        z_list = []
+        properties_list = []
+        breakpoints = []
+        cbf_storage = [None]
+        cbf_list = []
+        def cbf_hook_fn(module, input, output):
+            cbf_storage[0] = module.current_cbf
+
+        cbf_hook = model.decoder.gemnet.register_forward_hook(cbf_hook_fn)
+
+    for i in tqdm(range(num_gradient_steps)):
+        opt.zero_grad()
+        if maximize:
+            loss = -model.fc_property(z).mean()
+        else:
+            loss = model.fc_property(z).mean()
+        loss.backward()
+        opt.step()
+        if extra_returns:
+            recent_z = z.detach().cpu()
+            recent_property = model.fc_property(z).detach().cpu()
+
+        if i % interval == 0 or i == (num_gradient_steps-1) or i in extra_breakpoints:
+
+            crystals = model.langevin_dynamics(z, ld_kwargs)
+            if extra_returns:
+                breakpoints.append(i)
+                z_list.append(z.detach().cpu())
+                properties_list.append(model.fc_property(z))
+
+                cbf_list.append(cbf_storage[0])
+            all_crystals.append(crystals)
+    if extra_returns:
+        z_list = torch.stack(z_list, dim=0)
+        properties_list = torch.stack(properties_list, dim=0)
+        cbf_list = torch.stack(cbf_list, dim=0)
+        #breakpoints = torch.tensor(breakpoints)
+        return {k: torch.cat([d[k] for d in all_crystals]).unsqueeze(0) for k in
+                ['frac_coords', 'atom_types', 'num_atoms', 'lengths', 'angles']}, z_list, properties_list, breakpoints, cbf_list
+
+    return {k: torch.cat([d[k] for d in all_crystals]).unsqueeze(0) for k in
+            ['frac_coords', 'atom_types', 'num_atoms', 'lengths', 'angles']}
+
 
 
 def opt_chunk_generator(data, chunk_size):
@@ -208,7 +284,6 @@ def main(args):
 
             writer.add_scalar('Loss trajectory', loss_pred_dec.item(), step)
         writer.close()
-
 
     if 'gnn_prop' in args.tasks:
         print('Evaluate the accuracy of property prediction on a raw crystal structure')
@@ -450,84 +525,154 @@ def main(args):
             # Write structure to CIF file
             structure.to(filename=os.path.join(cif_path, f'generated{i}.cif'), fmt='cif')
 
+
+
     if 'opt_cif' in args.tasks:
-        print('Optimize structures, capture optimization steps along with z and prop')
-        initial_struct_loader = loaders[1]
-        extra_breakpoints = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 250, 350, 750]
-        opt_out, z, fc_properties, optimization_breakpoints = optimization(model, ld_kwargs, initial_struct_loader,
-                               num_starting_points=100, num_gradient_steps=5000,
-                               lr=1e-3, num_saved_crys=11, extra_returns=True,
-                                maximize=True, extra_breakpoints=extra_breakpoints)
+        print('Run opt_cif multiple times')
+        output_dict = {'eval_setting': args,
+                       'frac_coords': [],
+                       'num_atoms': [],
+                       'atom_types': [],
+                       'lengths': [],
+                       'angles': [],
+                       'ld_kwargs': ld_kwargs,
+                       'z': [],
+                       'cif': [],
+                       'fc_properties': [],
+                       'cbf': []}
 
-        chonker = opt_chunk_generator(opt_out, args.batch_size)
-        task_path = os.path.join(model_path, 'opt_cif')
+        task_path = os.path.join(model_path, f'opt_cif_{args.label}')
         os.makedirs(task_path, exist_ok=True)
-
-        for chunk, bp in zip(chonker, optimization_breakpoints):
-            cif_path = os.path.join(task_path)
-            os.makedirs(cif_path, exist_ok=True)
-
-            torch.save({
-                'eval_setting': args,
-                'frac_coords': chunk['frac_coords'],
-                'num_atoms': chunk['num_atoms'],
-                'atom_types': chunk['atom_types'],
-                'lengths': chunk['lengths'],
-                'angles': chunk['angles'],
-                'ld_kwargs': ld_kwargs,
-                'z': z,
-                'fc_properties': fc_properties
-            }, os.path.join(cif_path, 'data.pt'))
-
-            structure_objects = tensors_to_structures(chunk['lengths'][0], chunk['angles'][0], chunk['frac_coords'][0],
-                                                      chunk['atom_types'][0], chunk['num_atoms'][0])
-            for j, structure in enumerate(structure_objects):
-                # Write structure to CIF file
-                structure.to(filename=os.path.join(cif_path, f'generated{j}_step{bp}.cif'), fmt='cif')
-
-    if 'multi_opt_cif' in args.tasks:
+        total_generated_structures = 0
         n_batches = 2
-        for bb in range(n_batches):
-
-            print('Run opt_cif multiple times')
-            initial_struct_loader = loaders[1]
-            extra_breakpoints = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 250, 350, 750]
-            opt_out, z, fc_properties, optimization_breakpoints = optimization(model, ld_kwargs, initial_struct_loader,
+        initial_struct_loader = loaders[1]
+        extra_breakpoints = [10, 20, 30, 50, 100, 200, 300, 750]
+        for n, batch in enumerate(initial_struct_loader):
+            if n == n_batches and n_batches > 0:
+                break
+            opt_out, z, fc_properties, optimization_breakpoints, cbf = optimization_by_batch(model, ld_kwargs, batch,
                                                                                num_starting_points=100,
                                                                                num_gradient_steps=5000,
                                                                                lr=1e-3, num_saved_crys=11,
                                                                                extra_returns=True, maximize=True,
-                                                                               loader_shift=bb,
                                                                                extra_breakpoints=extra_breakpoints)
 
-            chonker = opt_chunk_generator(opt_out, args.batch_size) # todo fetch actual batch size back from opt (or use num(join(intervals, extra_intervals)), else last odd batch will cause problems
-            task_path = os.path.join(model_path, f'multi_opt_cif_{bb}')
-            os.makedirs(task_path, exist_ok=True)
+            n_generated_structures = batch.num_atoms.cpu().shape[0]
+            chonker = opt_chunk_generator(opt_out, n_generated_structures)
+
+
+            batch_output = {'frac_coords': [],
+                           'num_atoms': [],
+                           'atom_types': [],
+                           'lengths': [],
+                           'angles': [],
+                           'z': z,
+                            'fc_properties': fc_properties,
+                           'cif': [],
+                            'cbf': cbf}
+
+
 
             for chunk, bp in zip(chonker, optimization_breakpoints):
-                cif_path = os.path.join(task_path)
-                os.makedirs(cif_path, exist_ok=True)
-
-                torch.save({
-                    'eval_setting': args,
+                step_output ={
                     'frac_coords': chunk['frac_coords'],
                     'num_atoms': chunk['num_atoms'],
                     'atom_types': chunk['atom_types'],
                     'lengths': chunk['lengths'],
                     'angles': chunk['angles'],
-                    'ld_kwargs': ld_kwargs,
-                    'z': z,
-                    'fc_properties': fc_properties
-                }, os.path.join(cif_path, 'data.pt'))
+                    'cif': [],
+                }
 
                 structure_objects = tensors_to_structures(chunk['lengths'][0], chunk['angles'][0],
                                                           chunk['frac_coords'][0],
                                                           chunk['atom_types'][0], chunk['num_atoms'][0])
+
                 for j, structure in enumerate(structure_objects):
                     # Write structure to CIF file
-                    structure.to(filename=os.path.join(cif_path, f'generated{j}_step{bp}.cif'), fmt='cif')
+                    structure.to(filename=os.path.join(task_path, f'generated{j+total_generated_structures}_step{bp}.cif'), fmt='cif')
+
+                    cif_writer = CifWriter(structure)
+                    cif_string = cif_writer.__str__()
+                    step_output['cif'].append(cif_string)
 
 
+                for k, v in step_output.items():
+                    batch_output[k].append(step_output[k])
+
+            dictionary_cat(batch_output, dim=0)
+            for k, v in batch_output.items():
+                output_dict[k].append(batch_output[k])
+            total_generated_structures += n_generated_structures
+
+        dictionary_cat(output_dict, dim=1)
+        output_dict['breakpoints'] = optimization_breakpoints
+        torch.save(output_dict, os.path.join(task_path, 'data.pt'))
+
+    if 'opt_retrain' in args.tasks:
+        timer = {'setup': 0,
+                 'optimize': 0,
+                 'retrain': 0,
+                 'lammps': 0}
+        path_out = os.path.join(model_path, f'opt_cif_{args.label}')
+        num_steps = 10
+        epochs_per_step = 5
+
+        cur_train = loaders[0]
+        cur_val = loaders[1]
+        cur_structures = loaders[2]
+
+        trainer = pl.Trainer.from_config(cfg)
+        os.makedirs(path_out, exist_ok=True)
+        timer['setup'], cur_time = timer['setup'] + time.time() - start_time, time.time()
+        for i in range(num_steps):
+            subdir = os.path.join(path_out, str(i))
+            os.makedirs(subdir, exist_ok=True)
+            chkdir = os.path.join(subdir, 'checkpoints')
+            os.makedirs(chkdir, exist_ok=True)
+
+            batch_output = {'frac_coords': [],
+                           'num_atoms': [],
+                           'atom_types': [],
+                           'lengths': [],
+                           'angles': [],
+                           'z': z,
+                            'fc_properties': fc_properties,
+                           'cif': [],
+                            'cbf': cbf}
+
+            for batch in cur_structures:
+                opt_out, z, fc_properties, optimization_breakpoints, _ = optimization_by_batch(model, ld_kwargs, batch,
+                                                                                   num_starting_points=100,
+                                                                                   num_gradient_steps=500,
+                                                                                   lr=1e-3, num_saved_crys=1,
+                                                                                   extra_returns=True, maximize=True)
+
+            # Create subdirectory and save generated examples
+            subdir = os.path.join(path_out, str(i))
+            os.makedirs(subdir, exist_ok=True)
+
+            timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
+
+
+            # Create new dataset with outside software
+            optimized_structures, optimize_mask = 'lammps call here'
+            new_train, new_val, new_structures = 'lammps call here'
+            timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
+            # Merge old and new datasets
+            cur_train, cur_val, cur_structures = '', '', ''
+
+
+            trainer.logger.log_dir = os.path.join(subdir, 'checkpoints')
+            for callback in trainer.callbacks:
+                if isinstance(callback, ModelCheckpoint):
+                    callback.dirpath = chkdir
+
+            # Train for a few epochs with the new dataset
+            trainer.fit(model, train_dataset=cur_train, val_dataset=cur_val, max_epochs=epochs_per_step)
+
+            # Load the best checkpoint
+            best_model_path = trainer.checkpoint_callback.best_model_path
+            model.load_state_dict(torch.load(best_model_path))
 
 
 if __name__ == '__main__':

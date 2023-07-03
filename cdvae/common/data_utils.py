@@ -680,6 +680,40 @@ def preprocess(input_file, num_workers, niggli, primitive, graph_method,
 
     return ordered_results
 
+def preprocess_ad_hoc(df, num_workers, niggli, primitive, graph_method,
+               prop_list, preprocess_limit):
+    #df = pd.read_csv(input_file)[:preprocess_limit]
+
+    def process_one(row, niggli, primitive, graph_method, prop_list):
+        crystal_str = row['cif']
+        crystal = build_crystal(
+            crystal_str, niggli=niggli, primitive=primitive)
+        graph_arrays = build_crystal_graph(crystal, graph_method)
+        properties = {k: row[k] for k in prop_list if k in row.keys()}
+        result_dict = {
+            'mp_id': row['material_id'],
+            'cif': crystal_str,
+            'graph_arrays': graph_arrays,
+        }
+        result_dict.update(properties)
+        return result_dict
+
+    unordered_results = p_umap(
+        process_one,
+        [df.iloc[idx] for idx in range(len(df))],
+        [niggli] * len(df),
+        [primitive] * len(df),
+        [graph_method] * len(df),
+        [prop_list] * len(df),
+        num_cpus=num_workers)
+
+    mpid_to_results = {result['mp_id']: result for result in unordered_results}
+    ordered_results = [mpid_to_results[df.iloc[idx]['material_id']]
+                       for idx in range(len(df))]
+
+    return ordered_results
+
+
 
 def preprocess_tensors(crystal_array_list, niggli, primitive, graph_method):
     def process_one(batch_idx, crystal_array, niggli, primitive, graph_method):

@@ -125,6 +125,7 @@ class GemNetT(torch.nn.Module):
         scale_file: Optional[str] = None,
     ):
         super().__init__()
+        self.current_cbf = None
         self.num_targets = num_targets
         assert num_blocks > 0
         self.num_blocks = num_blocks
@@ -417,7 +418,7 @@ class GemNetT(torch.nn.Module):
         if self.otf_graph:
             edge_index, to_jimages, num_bonds = radius_graph_pbc(
                 cart_coords, lengths, angles, num_atoms, self.cutoff, self.max_neighbors,
-                device=num_atoms.device)
+                device=num_atoms.device) # ----------------------------GK this function produces an interaction graph, one could either increase for elastic or make it so that interaction is full
 
         # Switch the indices, so the second one becomes the target index,
         # over which we can efficiently aggregate.
@@ -532,7 +533,7 @@ class GemNetT(torch.nn.Module):
         # Calculate triplet angles
         cosφ_cab = inner_product_normalized(V_st[id3_ca], V_st[id3_ba])
         rad_cbf3, cbf3 = self.cbf_basis3(D_st, cosφ_cab, id3_ca)
-
+        self.current_cbf = rad_cbf3[0].detach().mean(dim=0)[None, None, Ellipsis]
         rbf = self.radial_basis(D_st)
 
         # Embedding block
@@ -547,6 +548,7 @@ class GemNetT(torch.nn.Module):
 
         rbf3 = self.mlp_rbf3(rbf)
         cbf3 = self.mlp_cbf3(rad_cbf3, cbf3, id3_ca, id3_ragged_idx)
+
 
         rbf_h = self.mlp_rbf_h(rbf)
         rbf_out = self.mlp_rbf_out(rbf)

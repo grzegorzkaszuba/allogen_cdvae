@@ -7,6 +7,13 @@ from ase.visualize import view
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
+def cif_names_list(timesteps, datapoints):
+    def cif_names_gen(timestep, datapoints):
+        for i in range(datapoints):
+            yield f'generated{i}_step{timestep}'
+    return [list(cif_names_gen(timestep, datapoints)) for timestep in range(timesteps)]
+
+
 def visualize_structure(lattice_lengths, lattice_angles, atom_numbers, atom_coords):
     # Convert atomic numbers to symbols
     atom_types = [Element.from_Z(Z).symbol for Z in atom_numbers]

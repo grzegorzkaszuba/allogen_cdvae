@@ -9,7 +9,7 @@ from torch_geometric.data import Data
 
 from cdvae.common.utils import PROJECT_ROOT
 from cdvae.common.data_utils import (
-    preprocess, preprocess_tensors, add_scaled_lattice_prop)
+    preprocess, preprocess_tensors, add_scaled_lattice_prop, preprocess_ad_hoc)
 
 
 class CrystDataset(Dataset):
@@ -78,6 +78,90 @@ class CrystDataset(Dataset):
     def __repr__(self) -> str:
         return f"CrystDataset({self.name=}, {self.path=})"
 
+
+class AdHocCrystDataset(Dataset):
+    def __init__(self, name, cif_data: list, prop_data, niggli, primitive,
+                 graph_method, preprocess_workers,
+                 lattice_scale_method, **kwargs):
+
+        if 'preprocess_limit' in kwargs:
+            preprocess_limit = kwargs.get('preprocess_limit')
+        else:
+            preprocess_limit = None
+        super().__init__()
+        self.cif_data = cif_data
+        self.name = name
+        self.prop = 'prop' if prop_data is None else None
+        # construct df ad hoc
+        if self.prop is None:
+            df_data = {'material_id': [i for i in range(len(cif_data))], 'cif': cif_data}
+        else:
+            df_data = {'material_id': [i for i in range(len(cif_data))], 'cif': cif_data, 'prop': prop_data}
+        self.df = pd.DataFrame(df_data)
+        self.niggli = niggli
+        self.primitive = primitive
+        self.graph_method = graph_method
+        self.lattice_scale_method = lattice_scale_method
+
+        self.cached_data = preprocess_ad_hoc(
+            self.df,
+            preprocess_workers,
+            niggli=self.niggli,
+            primitive=self.primitive,
+            graph_method=self.graph_method,
+            prop_list=[self.prop],
+            preprocess_limit=preprocess_limit)
+
+        add_scaled_lattice_prop(self.cached_data, lattice_scale_method)
+        self.lattice_scaler = None
+        self.scaler = None
+
+    def __len__(self) -> int:
+        return len(self.cached_data)
+
+    def __getitem__(self, index):
+        data_dict = self.cached_data[index]
+        (frac_coords, atom_types, lengths, angles, edge_indices,
+         to_jimages, num_atoms) = data_dict['graph_arrays']
+        # scaler is set in DataModule set stage
+
+        if self.scaler is not None and data_dict[self.prop] is not None:
+            prop = self.scaler.transform(data_dict[self.prop])
+
+            # atom_coords are fractional coordinates
+            # edge_index is incremented during batching
+            # https://pytorch-geometric.readthedocs.io/en/latest/notes/batching.html
+            data = Data(
+                frac_coords=torch.Tensor(frac_coords),
+                atom_types=torch.LongTensor(atom_types),
+                lengths=torch.Tensor(lengths).view(1, -1),
+                angles=torch.Tensor(angles).view(1, -1),
+                edge_index=torch.LongTensor(
+                    edge_indices.T).contiguous(),  # shape (2, num_edges)
+                to_jimages=torch.LongTensor(to_jimages),
+                num_atoms=num_atoms,
+                num_bonds=edge_indices.shape[0],
+                num_nodes=num_atoms,  # special attribute used for batching in pytorch geometric
+                y=prop.view(1, -1),
+            )
+
+        else:
+            data = Data(
+                frac_coords=torch.Tensor(frac_coords),
+                atom_types=torch.LongTensor(atom_types),
+                lengths=torch.Tensor(lengths).view(1, -1),
+                angles=torch.Tensor(angles).view(1, -1),
+                edge_index=torch.LongTensor(
+                    edge_indices.T).contiguous(),  # shape (2, num_edges)
+                to_jimages=torch.LongTensor(to_jimages),
+                num_atoms=num_atoms,
+                num_bonds=edge_indices.shape[0],
+                num_nodes=num_atoms,  # special attribute used for batching in pytorch geometric
+            )
+        return data
+
+    def __repr__(self) -> str:
+        return f"CrystDataset({self.name=}, {self.path=})"
 
 class TensorCrystDataset(Dataset):
     def __init__(self, crystal_array_list, niggli, primitive,

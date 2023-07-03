@@ -18,6 +18,7 @@ from cdvae.pl_data.dataset import TensorCrystDataset
 from cdvae.pl_data.datamodule import worker_init_fn, CrystDataModuleNH
 
 from torch_geometric.data import DataLoader
+from pymatgen.io.cif import CifWriter
 
 import os
 
