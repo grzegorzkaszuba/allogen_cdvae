@@ -810,39 +810,52 @@ def main(args):
                 # --------------------- Batch end ----------------------
 
 
-
             torch.save(output_dict, os.path.join(stepdir, 'data.pt'))
-
             timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
 
+            # ---------------------- CIF ---------------------
             cif_data = []
             for batch_cif in output_dict['cif']:
                 for cif_str in batch_cif[0]:
                     cif_data.append(cif_str)
-
-
-            # Create new dataset with outside software
-            optimized_structures, optimize_mask = 'lammps call here'
-            new_train, new_val, new_structures = 'lammps call here'
             timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
-            # Merge old and new datasets
-            cur_train_loader, cur_val_loader, cur_structure_loader = '', '', ''
+            # ------------------- LAMMPS --------------------
+            # Create new dataset with outside software
+            cif_lmp, prop_lmp = 'NotImplemented'
 
-            dataset = AdHocCrystDataset('identity_test_dataset', cif_data, None, niggli, primitive,
+
+
+
+            timer['lammps'], cur_time = timer['lammps'] + time.time() - cur_time, time.time()
+            # --------------- New datasets --------------------
+            dataset = AdHocCrystDataset('identity_test_dataset', cif_lmp, prop_lmp, niggli, primitive,
                                         graph_method, preprocess_workers, lattice_scale_method)
-
+            new_train, new_val, new_structures = [copy.deepcopy(dataset) for i in range(3)] #this is so that the model fits closely to new examples
+            # the accuracy growth is visible in val, and the new examples are further optimize with that fitting finished
             for callback in trainer.callbacks:
                 if isinstance(callback, ModelCheckpoint):
                     callback.dirpath = chkdir
 
-            # Train for a few epochs with the new dataset
+            # --------------- Merged loaders ------------------
 
+            cur_train_loader, cur_val_loader, cur_structure_loader = (
+                DataLoader(merge_datasets_cryst(cur_train_loader.dataset, new_train),
+                           batch_size=cur_train_loader.batch_size, shuffle=True),
+                DataLoader(merge_datasets_cryst(cur_val_loader.dataset, new_val),
+                           batch_size=cur_train_loader.batch_size, shuffle=True),
+                DataLoader(merge_datasets_cryst(cur_structure_loader.dataset, new_structures),
+                           batch_size=cur_train_loader.batch_size, shuffle=True)
+            )
+
+
+            # --------------- Retraining ----------------------
             trainer.fit(model, train_dataloader=cur_train_loader, val_dataloaders=cur_val_loader)
 
             # Load the best checkpoint
             best_model_path = trainer.checkpoint_callback.best_model_path
             model.load_state_dict(torch.load(best_model_path))
-
+            timer['retrain'], cur_time = timer['retrain'] + time.time() - cur_time, time.time()
+        return timer
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
