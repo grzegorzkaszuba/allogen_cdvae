@@ -66,6 +66,60 @@ def save_scatter_plot(pred, label, writer, name, plot_title=None):
     plt.show()
 
 
+import torch
+from torch.utils.tensorboard import SummaryWriter
+import matplotlib.pyplot as plt
+import numpy as np
+from PIL import Image
+from io import BytesIO
+
+# Create a tensor of floats with shape 10, 128
+data = torch.rand(10, 128)
+
+# Create a list of 10 names
+names = ['name_' + str(i) for i in range(10)]
+
+# Initialize SummaryWriter
+writer = SummaryWriter()
+
+# Iterate over tensors and names
+for i, (tensor, name) in enumerate(zip(data, names)):
+    # Reshape the tensor to 8x16
+    tensor_reshaped = tensor.view(8, 16)
+
+    # Normalize tensor to range [0, 1] for correct image display
+    tensor_reshaped = (tensor_reshaped - tensor_reshaped.min()) / (tensor_reshaped.max() - tensor_reshaped.min())
+
+    # Create a colormap
+    plt.figure(figsize=(5,5))
+    im = plt.imshow(tensor_reshaped.numpy(), cmap='jet')
+    plt.axis('off')
+
+    # Add a colorbar to the figure
+    plt.colorbar(im, orientation='horizontal')
+
+    # Save plot to a buffer
+    buffer = BytesIO()
+    plt.savefig(buffer, format='png')
+    buffer.seek(0)
+
+    # Load buffer as an image
+    img = Image.open(buffer)
+
+    # Convert image to tensor
+    img_tensor = torch.from_numpy(np.array(img)).permute(2, 0, 1)
+
+    # Add to tensorboard
+    writer.add_image(name, img_tensor, i)
+
+    plt.close()
+
+# Close the writer
+writer.close()
+
+
+
+
 
 if __name__ == '__main__':
 

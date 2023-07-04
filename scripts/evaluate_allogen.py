@@ -22,16 +22,70 @@ import math
 import pytorch_lightning as pl
 
 from evaluate import reconstructon, generation, optimization
+from cdvae.pl_data.dataset import AdHocCrystDataset
 
 #from gaussian_process import get_gaussian_regressor, get_uncertainty
 
 import numpy as np
-
+import subprocess
+import tempfile
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
-from torch.utils.data import ConcatDataset
+from torch.utils.data import ConcatDataset, DataLoader
 import copy
 
+from pymatgen.io.cif import CifParser
+from pymatgen.io.lammps.data import LammpsData
+
+
+def merge_datasets_cryst(dataset1, dataset2):
+    # Merge the two lists
+    new_dataset = copy.deepcopy(dataset1)
+    new_dataset.cached_data = new_dataset.cached_data + copy.deepcopy(dataset2.cached_data)
+    return new_dataset
+
+def run_lammps_simulation(cif_str, lammps_path):
+    # Create a temporary file
+    with tempfile.NamedTemporaryFile(suffix=".cif", delete=False) as temp_cif:
+        temp_cif.write(cif_str.encode())
+
+    # Parse the CIF file with pymatgen
+    parser = CifParser(temp_cif.name)
+    structure = parser.get_structures()[0]
+
+    # Create a LAMMPS data file
+    lammps_data = LammpsData.from_structure(structure)
+    with tempfile.NamedTemporaryFile(suffix=".dat", delete=False) as temp_dat:
+        lammps_data.write_file(temp_dat.name)
+
+    # Create a LAMMPS input script
+    lammps_input = """
+    units metal
+    atom_style charge
+    boundary p p p
+    read_data {}
+    pair_style lj/cut 2.5
+    pair_coeff * * 1.0 1.0
+    neighbor 0.3 bin
+    neigh_modify delay 0 every 20 check no
+    fix 1 all nve
+    run 1000
+    """.format(temp_dat.name)
+    with tempfile.NamedTemporaryFile(suffix=".in", delete=False, mode="w") as temp_in:
+        temp_in.write(lammps_input)
+
+    # Run lammps with the input script
+    cmd = f"{lammps_path} < {temp_in.name}"
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate()
+
+    # Remove temp files
+    os.remove(temp_cif.name)
+    os.remove(temp_dat.name)
+    os.remove(temp_in.name)
+
+    # Return output and error as a dictionary
+    return {"stdout": stdout.decode(), "stderr": stderr.decode()}
 
 
 def dictionary_cat(d, dim=0):
@@ -58,7 +112,10 @@ def optimization_by_batch(model, ld_kwargs, batch,
     model.freeze()
 
     all_crystals = []
-    interval = num_gradient_steps // (num_saved_crys-1)
+    if num_saved_crys > 1:
+        interval = num_gradient_steps // (num_saved_crys-1)
+    else:
+        interval = -1
     if extra_returns:
         z_list = []
         properties_list = []
@@ -82,7 +139,7 @@ def optimization_by_batch(model, ld_kwargs, batch,
             recent_z = z.detach().cpu()
             recent_property = model.fc_property(z).detach().cpu()
 
-        if i % interval == 0 or i == (num_gradient_steps-1) or i in extra_breakpoints:
+        if (i % interval == 0 and interval != -1) or i == (num_gradient_steps-1) or i in extra_breakpoints:
 
             crystals = model.langevin_dynamics(z, ld_kwargs)
             if extra_returns:
@@ -181,6 +238,7 @@ def main(args):
     model_path = Path(args.model_path)
 
     model, loaders, cfg = load_model_full(model_path)
+    model.to('cuda')
     ld_kwargs = SimpleNamespace(n_step_each=args.n_step_each,
                                 step_lr=args.step_lr,
                                 min_sigma=args.min_sigma,
@@ -544,16 +602,16 @@ def main(args):
         task_path = os.path.join(model_path, f'opt_cif_{args.label}')
         os.makedirs(task_path, exist_ok=True)
         total_generated_structures = 0
-        n_batches = 2
+        n_batches = 3
         initial_struct_loader = loaders[1]
-        extra_breakpoints = [10, 20, 30, 50, 100, 200, 300, 750]
+        extra_breakpoints = []
         for n, batch in enumerate(initial_struct_loader):
             if n == n_batches and n_batches > 0:
                 break
             opt_out, z, fc_properties, optimization_breakpoints, cbf = optimization_by_batch(model, ld_kwargs, batch,
                                                                                num_starting_points=100,
                                                                                num_gradient_steps=5000,
-                                                                               lr=1e-3, num_saved_crys=11,
+                                                                               lr=1e-3, num_saved_crys=3,
                                                                                extra_returns=True, maximize=True,
                                                                                extra_breakpoints=extra_breakpoints)
 
@@ -574,7 +632,7 @@ def main(args):
 
 
             for chunk, bp in zip(chonker, optimization_breakpoints):
-                step_output ={
+                step_output = {
                     'frac_coords': chunk['frac_coords'],
                     'num_atoms': chunk['num_atoms'],
                     'atom_types': chunk['atom_types'],
@@ -599,59 +657,168 @@ def main(args):
                 for k, v in step_output.items():
                     batch_output[k].append(step_output[k])
 
-            dictionary_cat(batch_output, dim=0)
+            #dictionary_cat(batch_output, dim=0)
             for k, v in batch_output.items():
                 output_dict[k].append(batch_output[k])
             total_generated_structures += n_generated_structures
 
-        dictionary_cat(output_dict, dim=1)
+        #dictionary_cat(output_dict, dim=1)
         output_dict['breakpoints'] = optimization_breakpoints
         torch.save(output_dict, os.path.join(task_path, 'data.pt'))
 
     if 'opt_retrain' in args.tasks:
+        start_time = time.time()
         timer = {'setup': 0,
                  'optimize': 0,
                  'retrain': 0,
                  'lammps': 0}
-        path_out = os.path.join(model_path, f'opt_cif_{args.label}')
+        path_out = os.path.join(model_path, f'retrain_{args.label}')
         num_steps = 10
         epochs_per_step = 5
 
-        cur_train = loaders[0]
-        cur_val = loaders[1]
-        cur_structures = loaders[2]
+        (niggli, primitive, graph_method, preprocess_workers, lattice_scale_method) = (
+            cfg.data.datamodule.datasets.train.niggli,
+            cfg.data.datamodule.datasets.train.primitive,
+            cfg.data.datamodule.datasets.train.graph_method,
+            cfg.data.datamodule.datasets.train.preprocess_workers,
+            cfg.data.datamodule.datasets.train.lattice_scale_method
+        )
 
-        trainer = pl.Trainer.from_config(cfg)
+        cur_train_loader = copy.deepcopy(loaders[0])
+        cur_val_loader = copy.deepcopy(loaders[1])
+        cur_structure_loader = copy.deepcopy(loaders[2])
+
+        lammps_path = "C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"
+
         os.makedirs(path_out, exist_ok=True)
+        callbacks = [ModelCheckpoint(
+                    dirpath=path_out,
+                    monitor=cfg.train.monitor_metric,
+                    mode=cfg.train.monitor_metric_mode,
+                    save_top_k=cfg.train.model_checkpoints.save_top_k,
+                    verbose=cfg.train.model_checkpoints.verbose,
+            )]
+
+
+        # --------------------------- trainer setup -----------------------------
+        # Convert Namespace to dict
+        trainer_args_dict = vars(cfg.train.pl_trainer).copy()
+
+        # Remove keys starting with underscore
+        keys_to_remove = [key for key in trainer_args_dict if key.startswith('_')]
+        for key in keys_to_remove:
+            trainer_args_dict.pop(key)
+
+        # Modify the max_epochs and default_root_dir parameters
+        trainer_args_dict['max_epochs'] = 50
+        trainer_args_dict['default_root_dir'] = path_out
+
+        # Now, we can pass all other parameters from cfg. For example:
+        trainer_args_dict['logger'] = True
+        trainer_args_dict['callbacks'] = None
+        trainer_args_dict['deterministic'] = cfg.train.deterministic
+        trainer_args_dict['check_val_every_n_epoch'] = cfg.logging.val_check_interval
+        trainer_args_dict['progress_bar_refresh_rate'] = cfg.logging.progress_bar_refresh_rate
+        trainer_args_dict['resume_from_checkpoint'] = None
+        if torch.cuda.is_available():
+            trainer_args_dict['gpus'] = -1
+        # Pass the modified dict to the Trainer initialization
+        trainer = pl.Trainer(**trainer_args_dict)
+
         timer['setup'], cur_time = timer['setup'] + time.time() - start_time, time.time()
+
+
+
         for i in range(num_steps):
-            subdir = os.path.join(path_out, str(i))
-            os.makedirs(subdir, exist_ok=True)
-            chkdir = os.path.join(subdir, 'checkpoints')
+            # ------------------ Cycle setup ------------------
+            n_structures_retrain = 0
+            stepdir = os.path.join(path_out, str(i))
+            os.makedirs(stepdir, exist_ok=True)
+            chkdir = os.path.join(stepdir, 'checkpoints')
             os.makedirs(chkdir, exist_ok=True)
 
-            batch_output = {'frac_coords': [],
+            output_dict = {'eval_setting': args,
+                           'frac_coords': [],
                            'num_atoms': [],
                            'atom_types': [],
                            'lengths': [],
                            'angles': [],
-                           'z': z,
-                            'fc_properties': fc_properties,
+                           'ld_kwargs': ld_kwargs,
+                           'z': [],
                            'cif': [],
-                            'cbf': cbf}
+                           'fc_properties': [],
+                           'cbf': []}
 
-            for batch in cur_structures:
-                opt_out, z, fc_properties, optimization_breakpoints, _ = optimization_by_batch(model, ld_kwargs, batch,
-                                                                                   num_starting_points=100,
-                                                                                   num_gradient_steps=500,
-                                                                                   lr=1e-3, num_saved_crys=1,
-                                                                                   extra_returns=True, maximize=True)
+            # ------------------ Optimization step ------------------------------
+            for n, batch in enumerate(cur_structure_loader):
+                if n > 2:
+                    continue
+                opt_out, z, fc_properties, optimization_breakpoints, cbf = optimization_by_batch(model, ld_kwargs,
+                                                                                                 batch,
+                                                                                                 num_starting_points=100,
+                                                                                                 num_gradient_steps=500,
+                                                                                                 lr=1e-3,
+                                                                                                 num_saved_crys=1,
+                                                                                                 extra_returns=True,
+                                                                                                 maximize=True)
 
-            # Create subdirectory and save generated examples
-            subdir = os.path.join(path_out, str(i))
-            os.makedirs(subdir, exist_ok=True)
+                n_generated_structures = batch.num_atoms.cpu().shape[0]
+                chonker = opt_chunk_generator(opt_out, n_generated_structures)
+
+                batch_output = {'frac_coords': [],
+                                'num_atoms': [],
+                                'atom_types': [],
+                                'lengths': [],
+                                'angles': [],
+                                'z': z,
+                                'fc_properties': fc_properties,
+                                'cif': [],
+                                'cbf': cbf}
+
+                for chunk, bp in zip(chonker, optimization_breakpoints):
+                    step_output = {
+                        'frac_coords': chunk['frac_coords'],
+                        'num_atoms': chunk['num_atoms'],
+                        'atom_types': chunk['atom_types'],
+                        'lengths': chunk['lengths'],
+                        'angles': chunk['angles'],
+                        'cif': [],
+                    }
+
+                    # ----------------------- Writing structures --------------------------------
+
+                    structure_objects = tensors_to_structures(chunk['lengths'][0], chunk['angles'][0],
+                                                              chunk['frac_coords'][0],
+                                                              chunk['atom_types'][0], chunk['num_atoms'][0])
+
+                    for j, structure in enumerate(structure_objects):
+                        # Write structure to CIF file
+                        structure.to(
+                            filename=os.path.join(stepdir, f'generated{j + n_structures_retrain}_step{bp}.cif'),
+                            fmt='cif')
+
+                        cif_writer = CifWriter(structure)
+                        cif_string = cif_writer.__str__()
+                        step_output['cif'].append(cif_string)
+
+                    for k, v in step_output.items():
+                        batch_output[k].append(step_output[k])
+
+                for k, v in batch_output.items():
+                    output_dict[k].append(batch_output[k])
+                n_structures_retrain += n_generated_structures
+                # --------------------- Batch end ----------------------
+
+
+
+            torch.save(output_dict, os.path.join(stepdir, 'data.pt'))
 
             timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
+
+            cif_data = []
+            for batch_cif in output_dict['cif']:
+                for cif_str in batch_cif[0]:
+                    cif_data.append(cif_str)
 
 
             # Create new dataset with outside software
@@ -659,16 +826,18 @@ def main(args):
             new_train, new_val, new_structures = 'lammps call here'
             timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
             # Merge old and new datasets
-            cur_train, cur_val, cur_structures = '', '', ''
+            cur_train_loader, cur_val_loader, cur_structure_loader = '', '', ''
 
+            dataset = AdHocCrystDataset('identity_test_dataset', cif_data, None, niggli, primitive,
+                                        graph_method, preprocess_workers, lattice_scale_method)
 
-            trainer.logger.log_dir = os.path.join(subdir, 'checkpoints')
             for callback in trainer.callbacks:
                 if isinstance(callback, ModelCheckpoint):
                     callback.dirpath = chkdir
 
             # Train for a few epochs with the new dataset
-            trainer.fit(model, train_dataset=cur_train, val_dataset=cur_val, max_epochs=epochs_per_step)
+
+            trainer.fit(model, train_dataloader=cur_train_loader, val_dataloaders=cur_val_loader)
 
             # Load the best checkpoint
             best_model_path = trainer.checkpoint_callback.best_model_path
