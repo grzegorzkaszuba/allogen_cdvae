@@ -339,6 +339,16 @@ class CDVAE(BaseModule):
         atom_type_probs = (
             F.one_hot(batch.atom_types - 1, num_classes=MAX_ATOMIC_NUM) +
             pred_composition_probs * used_type_sigmas_per_atom[:, None])
+        try:
+            _ = torch.multinomial(atom_type_probs, num_samples=1).squeeze(1) + 1
+        except:
+            emergency_output = {
+                'pred_composition_per_atom': pred_composition_per_atom.detach(),
+                'pred_composition_probs': pred_composition_probs,
+                'atom_type_probs': atom_type_probs}
+
+            torch.save(emergency_output, 'emergency_out.pt')
+
         rand_atom_types = torch.multinomial(
             atom_type_probs, num_samples=1).squeeze(1) + 1
 
