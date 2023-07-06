@@ -37,6 +37,19 @@ import copy
 from pymatgen.io.cif import CifParser
 from pymatgen.io.lammps.data import LammpsData
 
+import tempfile
+from ase.io import read
+
+
+def read_cif_from_strings(cif_strings):
+    structures = []
+    for cif_string in cif_strings:
+        with tempfile.NamedTemporaryFile(suffix=".cif", mode="w") as temp_file:
+            temp_file.write(cif_string)
+            temp_file.flush()  # make sure data is written to disk
+            structure = read(temp_file.name)
+            structures.append(structure)
+    return structures
 
 def merge_datasets_cryst(dataset1, dataset2):
     # Merge the two lists
@@ -630,7 +643,6 @@ def main(args):
                             'cbf': cbf}
 
 
-
             for chunk, bp in zip(chonker, optimization_breakpoints):
                 step_output = {
                     'frac_coords': chunk['frac_coords'],
@@ -688,7 +700,7 @@ def main(args):
         cur_val_loader = copy.deepcopy(loaders[1])
         cur_structure_loader = copy.deepcopy(loaders[2])
 
-        lammps_path = "C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"
+        lammps_path = '"C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"'
 
         os.makedirs(path_out, exist_ok=True)
         callbacks = [ModelCheckpoint(
@@ -820,10 +832,11 @@ def main(args):
                     cif_data.append(cif_str)
             timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
             # ------------------- LAMMPS --------------------
-            # Create new dataset with outside software
-            cif_lmp, prop_lmp = 'NotImplemented'
 
-
+            from amir_lammps import lammps_pot, lammps_in, convert_cif_to_lammps, update_lammps_data_file, modify_file, lmp_energy_calculator, extract_energy_from_log, lmp_elastic_calculator
+            convert_cif_to_lammps(stepdir)
+            lmp_energy_calculator(stepdir, 'eam/alloy', lammps_pot, lammps_path, lammps_in)
+            lmp_elastic_calculator(stepdir, 'eam/alloy', lammps_pot, lammps_path, lammps_in)
 
 
             timer['lammps'], cur_time = timer['lammps'] + time.time() - cur_time, time.time()
@@ -862,7 +875,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', required=True)
     parser.add_argument('--prop_model_path', default='')
     parser.add_argument('--tasks', nargs='+', default=['recon', 'gen', 'opt'])
-    parser.add_argument('--n_step_each', default=100, type=int)
+    parser.add_argument('--n_step_each', default=30, type=int)
     parser.add_argument('--step_lr', default=1e-4, type=float)
     parser.add_argument('--min_sigma', default=0, type=float)
     parser.add_argument('--save_traj', default=False, type=bool)
