@@ -345,7 +345,12 @@ class CDVAE(BaseModule):
             emergency_output = {
                 'pred_composition_per_atom': pred_composition_per_atom.detach(),
                 'pred_composition_probs': pred_composition_probs,
-                'atom_type_probs': atom_type_probs}
+                'atom_type_probs': atom_type_probs,
+                'mu': mu,
+                'log_var': log_var,
+                'z': z,
+                'gem_out': (pred_num_atoms, pred_lengths_and_angles, pred_lengths, pred_angles,
+         pred_composition_per_atom)}
 
             torch.save(emergency_output, 'emergency_out.pt')
 

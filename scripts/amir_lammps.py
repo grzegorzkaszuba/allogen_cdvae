@@ -258,11 +258,15 @@ def lmp_elastic_calculator(source_dir, pot, pot_name, lammps_command, lammps_inp
         # modify potential
         modify_file(os.path.join(output_file, 'potential.mod'), search_lines_pot, modification_pot)
 
+        # Move to prompt directory to capture all the auxiliary files
+        root_cwd = os.getcwd()
+        os.chdir(output_file)
         # run the simulation
-        os.system(f"{lammps_command} -in {os.path.join(os.getcwd(), lammps_inputs_dir, 'elastic', 'in.elastic')}")
+        os.system(f"{lammps_command} -in {os.path.join(os.getcwd(), 'in.elastic')}")
 
         # extract elastic_vector from the log file
         elastic_vector = extract_elastic_vector("log.lammps")
+        os.chdir(root_cwd)
 
         # clean up
         os.remove(new_input_file_init)
