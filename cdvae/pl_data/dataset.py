@@ -89,32 +89,43 @@ class AdHocCrystDataset(Dataset):
         else:
             preprocess_limit = None
         super().__init__()
+        self.path = ''
         self.cif_data = cif_data
         self.name = name
-        self.prop = 'prop' if prop_data is None else None
+        prop_name = kwargs.get('prop_name') if 'prop_name' in kwargs else 'prop'
+        self.prop = prop_name if prop_data is not None else None
         # construct df ad hoc
         if self.prop is None:
             df_data = {'material_id': [i for i in range(len(cif_data))], 'cif': cif_data}
         else:
-            df_data = {'material_id': [i for i in range(len(cif_data))], 'cif': cif_data, 'prop': prop_data}
+            df_data = {'material_id': [i for i in range(len(cif_data))], 'cif': cif_data,  prop_name: prop_data}
         self.df = pd.DataFrame(df_data)
         self.niggli = niggli
         self.primitive = primitive
         self.graph_method = graph_method
         self.lattice_scale_method = lattice_scale_method
 
-        self.cached_data = preprocess_ad_hoc(
-            self.df,
-            preprocess_workers,
-            niggli=self.niggli,
-            primitive=self.primitive,
-            graph_method=self.graph_method,
-            prop_list=[self.prop],
-            preprocess_limit=preprocess_limit)
+        if self.prop is None:
+            self.cached_data = preprocess_ad_hoc(
+                self.df,
+                preprocess_workers,
+                niggli=self.niggli,
+                primitive=self.primitive,
+                graph_method=self.graph_method,
+                preprocess_limit=preprocess_limit)
+        else:
+            self.cached_data = preprocess_ad_hoc(
+                self.df,
+                preprocess_workers,
+                niggli=self.niggli,
+                primitive=self.primitive,
+                graph_method=self.graph_method,
+                prop_list=[self.prop],
+                preprocess_limit=preprocess_limit)
 
         add_scaled_lattice_prop(self.cached_data, lattice_scale_method)
-        self.lattice_scaler = None
-        self.scaler = None
+        self.lattice_scaler = kwargs.get('lattice_scaler').copy() if 'lattice_scaler' in kwargs else None
+        self.scaler = kwargs.get('scaler').copy() if 'scaler' in kwargs else None
 
     def __len__(self) -> int:
         return len(self.cached_data)

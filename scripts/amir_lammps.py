@@ -3,7 +3,13 @@ from pathlib import Path  # used for directory creation
 import shutil  # used for file moving
 
 import numpy as np  # used in update_lammps_data_file for handling arrays
-from ase.io import read, write  # used for reading CIF files and writing LAMMPS files
+from ase.io import read, write, lammpsdata  # used for reading CIF files and writing LAMMPS files
+
+from pymatgen.io.cif import CifWriter
+from pymatgen.io.ase import AseAtomsAdaptor
+
+import os
+from pathlib import Path
 
 lammps_pot = os.path.join('lammps_config', 'potentials', 'NiFeCr.eam.alloy')
 lammps_in = os.path.join('lammps_config', 'lammps_prompt_template')
@@ -80,40 +86,30 @@ def convert_cif_to_lammps(source_dir):
             shutil.move(os.path.join(source_dir, file_name), target_dir)
 
 
-import os
-import json
-import subprocess
-import pandas as pd
-from pathlib import Path
 
-def extract_energy_from_log(filename):
-    """Extracts the energy and other parameters from a lammps log file and returns them in a DataFrame."""
+
+def extract_initial_final_energy(filename):
+    """Extracts the initial and final energy from a lammps log file."""
     with open(filename, 'r') as f:
         lines = f.readlines()
 
-    # The data dictionary will store our data
-    data = {}
+    # Initialize energy values as None
+    initial_energy = final_energy = None
 
     # Iterate over the lines in the log file
-    for line in lines:
-        # Split the line into words
-        words = line.split()
+    for i, line in enumerate(lines):
+        # If the line contains "Energy initial", the next line contains the energy value
+        if "Energy initial" in line:
+            energy_line = lines[i+1]
+            energies = energy_line.split()
+            initial_energy = float(energies[0])
+            final_energy = float(energies[-1])
 
-        # If the line contains "Step", "Energy", etc., it's a header line
-        if "Step" in words or "Energy" in words or "Temp" in words:
-            headers = words
+    if initial_energy is None or final_energy is None:
+        raise ValueError(f"Could not find 'Energy initial' in {filename}")
 
-            # Initialize an empty list for each header
-            for header in headers:
-                data[header] = []
-        elif len(words) == len(headers):
-            # If the line contains numeric data, add the data to our dictionary
-            for i, word in enumerate(words):
-                data[headers[i]].append(float(word))
+    return initial_energy, final_energy
 
-    # Convert the dictionary to a pandas DataFrame and return it
-    df = pd.DataFrame(data)
-    return df
 
 
 def modify_file(file_path, lines_to_search, replacement_lines):
@@ -132,25 +128,14 @@ def modify_file(file_path, lines_to_search, replacement_lines):
     return lines
 def lmp_energy_calculator(source_dir, pot, pot_name, lammps_command, lammps_inputs_dir):
     """minimises the structures and calculates the energy"""
-
+    initial_energies = []
+    final_energies = []
     # Defining the paths for our directories
     relaxed_structures_dir = os.path.join(source_dir, "lammps_data", "relaxed-structures")
-    finalDB_dir = os.path.join(source_dir, "lammps_data", "finalDB")
     folder_path = os.path.join(source_dir, "lammps_data")
 
     # Creating the directories if they do not exist
     Path(relaxed_structures_dir).mkdir(parents=True, exist_ok=True)
-    Path(finalDB_dir).mkdir(parents=True, exist_ok=True)
-
-    energy_json_file = os.path.join(finalDB_dir, "energy.json")
-
-    if os.path.isfile(energy_json_file):
-        # Load the existing data from the JSON file
-        with open(energy_json_file, "r") as file:
-            prop = json.load(file)
-        os.remove(energy_json_file)
-    else:
-        prop = {}
 
     # list of available structures
     #file_names = os.listdir(folder_path)
@@ -174,57 +159,51 @@ def lmp_energy_calculator(source_dir, pot, pot_name, lammps_command, lammps_inpu
             ("read_data", f"read_data {os.path.join(folder_path, name)}"),
             ('wd', f'write_data {os.path.join(relaxed_structures_dir, name)}')]
 
+        lmp_task_dir = os.path.join(os.getcwd(), lammps_inputs_dir)
         modified_lines = modify_file(input_file, search_lines, modification_lines)
-        new_input_file = os.path.join(lammps_inputs_dir, f'in.{name}_min')
+        new_input_file = os.path.join(lmp_task_dir, f'in.{name}_min')
 
         with open(new_input_file, 'w') as file:
             file.writelines(modified_lines)
 
+
+        root_dir = os.getcwd()
+
+
         print('printing lammps command')
-        print(f'{lammps_command} -in {os.path.join(os.getcwd(), lammps_inputs_dir, f"in.{name}_min")}')
+        print(f'{lammps_command} -in {os.path.join(lmp_task_dir, f"in.{name}_min")}')
+
+        # controlling the directories
+
+        os.chdir(lmp_task_dir)
+        assert 'RELAXATIONTASKHERE' in os.listdir()
 
         # run the simulation and get the energy
-        os.system(f'{lammps_command} -in {os.path.join(os.getcwd(), lammps_inputs_dir, f"in.{name}_min")}')
+        os.system(f'{lammps_command} -in {os.path.join(lmp_task_dir, f"in.{name}_min")}')
+        initial_energy, final_energy = extract_initial_final_energy('log.lammps')
+        initial_energies.append(initial_energy), final_energies.append(final_energy)
 
-
-
-        #df = extract_energy_from_log('log.lammps')
-        #prop[name] = df.iloc[-1]['Energy']
-
-    # save the data
-    with open(energy_json_file, "w") as file:
-        json.dump(prop, file)
+        os.remove(new_input_file), os.remove('log.lammps')
+        os.chdir(root_dir)
 
     #return prop, df
-
+    return initial_energies, final_energies
 
 def lmp_elastic_calculator(source_dir, pot, pot_name, lammps_command, lammps_inputs_dir):
     """minimises the structures and calculates the elastic vector"""
 
+    elastic_vectors = []
     # Defining the paths for our directories
-    finalDB_dir = os.path.join(source_dir, "lammps_data", "finalDB")
     folder_path = os.path.join(source_dir, "lammps_data")
 
-    # Creating the directories if they do not exist
-    Path(finalDB_dir).mkdir(parents=True, exist_ok=True)
-
-    elastic_json_file = os.path.join(finalDB_dir, "elastic.json")
-
-    if os.path.isfile(elastic_json_file):
-        # Load the existing data from the JSON file
-        with open(elastic_json_file, "r") as file:
-            prop = json.load(file)
-        os.remove(elastic_json_file)
-    else:
-        prop = {}
 
     # list of available structures
     file_names = [f for f in os.listdir(folder_path) if f.endswith('.data')]
 
     # input files to be modified
-    input_file_init = os.path.join(lammps_inputs_dir, 'elastic', 'init.mod')
-    input_file_pot = os.path.join(lammps_inputs_dir, 'elastic', 'potential.mod')
-    output_file = os.path.join(lammps_inputs_dir, 'elastic_output')
+    input_template_init = os.path.join(os.getcwd(), lammps_inputs_dir, 'elastic', 'init.mod')
+    input_template_pot = os.path.join(os.getcwd(), lammps_inputs_dir, 'elastic', 'potential.mod')
+    output_file = os.path.join(os.getcwd(), lammps_inputs_dir, 'elastic_output')
 
     # Specify the lines to search for in the input files
     search_lines_init = ['read_data']
@@ -242,44 +221,36 @@ def lmp_elastic_calculator(source_dir, pot, pot_name, lammps_command, lammps_inp
         ]
 
         # modify the files
-        modified_lines_init = modify_file(input_file_init, search_lines_init, modification_init)
-        modified_lines_pot = modify_file(input_file_pot, search_lines_pot, modification_pot)
+        modified_lines_init = modify_file(input_template_init, search_lines_init, modification_init)
+        modified_lines_pot = modify_file(input_template_pot, search_lines_pot, modification_pot)
 
 
-
-        new_input_file_init = os.path.join(lammps_inputs_dir, 'init.mod')
-        new_input_file_pot = os.path.join(lammps_inputs_dir, 'potential.mod')
-
-        shutil.copy(input_file_init, os.path.join(output_file, 'init.mod'))
-        shutil.copy(input_file_pot, os.path.join(output_file, 'potential.mod'))
-
-        # Write the modified files back
-        modify_file(os.path.join(output_file, 'init.mod'), search_lines_init, modification_init)
-        # modify potential
-        modify_file(os.path.join(output_file, 'potential.mod'), search_lines_pot, modification_pot)
+        with open(os.path.join(output_file, 'init.mod'), 'w') as file:
+            file.writelines(modified_lines_init)
+        with open(os.path.join(output_file, 'potential.mod'), 'w') as file:
+            file.writelines(modified_lines_pot)
 
         # Move to prompt directory to capture all the auxiliary files
         root_cwd = os.getcwd()
         os.chdir(output_file)
+        assert 'PREDICTIONTASKHERE' in os.listdir()
         # run the simulation
         os.system(f"{lammps_command} -in {os.path.join(os.getcwd(), 'in.elastic')}")
 
         # extract elastic_vector from the log file
         elastic_vector = extract_elastic_vector("log.lammps")
-        os.chdir(root_cwd)
+        elastic_vectors.append(elastic_vector)
 
         # clean up
-        os.remove(new_input_file_init)
-        os.remove(new_input_file_pot)
+        os.remove(os.path.join(output_file, 'init.mod'))
+        os.remove(os.path.join(output_file, 'potential.mod'))
+        os.remove('log.lammps')
+        os.remove("restart.equil")
 
-        prop.update({f"{name.split('.')[0]}": elastic_vector})
-        print(f"{name} DONE")
+        os.chdir(root_cwd)
+        #print(f"{name} DONE")
 
-    os.remove("log.lammps")
-    os.remove("restart.equil")
-
-    with open(elastic_json_file, "a") as file:
-        json.dump(prop, file)
+    return elastic_vectors
 
 
 def extract_elastic_vector(log_file):
@@ -293,5 +264,31 @@ def extract_elastic_vector(log_file):
             elastic_vector = eval(line.split("cdvae ")[1].strip())
             return elastic_vector
 
+    raise Warning('The value of elastic vector not found in lammps logs')
+    return None
 
-    return None  # in case the elastic vector was not found in the log file
+def extract_element_types(f):
+    return f.readlines()[0].strip().split(' ')
+
+def lammps_data_to_cif(structure_names, raw_path, relaxed_path):
+    cif_strings = []
+    for name in structure_names:
+        # Read LAMMPS data file
+        atoms = lammpsdata.read_lammps_data(os.path.join(relaxed_path, name), style='atomic')
+
+        # Manually map LAMMPS atom types to element symbols
+
+        with open(os.path.join(raw_path, name), 'r') as f:
+            element_symbols = extract_element_types(f)
+
+        atom_types = atoms.get_array('type')
+        atom_symbols = [element_symbols[atom_type - 1] for atom_type in atom_types]
+        atoms.set_chemical_symbols(atom_symbols)
+
+        # Convert ASE Atoms to PyMatGen Structure
+        structure = AseAtomsAdaptor().get_structure(atoms)
+
+        # Write CIF file using CifWriter
+        cif_writer = CifWriter(structure)
+        cif_strings.append(cif_writer.__str__())
+    return cif_strings

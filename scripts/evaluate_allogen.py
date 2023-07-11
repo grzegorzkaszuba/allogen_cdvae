@@ -6,13 +6,16 @@ from tqdm import tqdm
 from torch.optim import Adam
 from pathlib import Path
 from types import SimpleNamespace
-from torch_geometric.data import Batch
+
 
 from eval_utils import load_model, load_model_full, load_tensor_data, prop_model_eval, get_crystals_list, get_cryst_loader, tensors_to_structures
 from visualization_utils import save_scatter_plot, cif_names_list
+from amir_lammps import lammps_pot, lammps_in, convert_cif_to_lammps, lammps_data_to_cif, lmp_energy_calculator, \
+    lmp_elastic_calculator
 
-import tensorboard
+
 import os
+import re
 from torch.utils.tensorboard import SummaryWriter
 from pymatgen.io.cif import CifWriter
 import matplotlib as mpl
@@ -31,7 +34,8 @@ import subprocess
 import tempfile
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
-from torch.utils.data import ConcatDataset, DataLoader
+from torch.utils.data import ConcatDataset
+from torch_geometric.data import DataLoader
 import copy
 
 from pymatgen.io.cif import CifParser
@@ -833,17 +837,27 @@ def main(args):
             timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
             # ------------------- LAMMPS --------------------
 
-            from amir_lammps import lammps_pot, lammps_in, convert_cif_to_lammps, update_lammps_data_file, modify_file, lmp_energy_calculator, extract_energy_from_log, lmp_elastic_calculator
-            convert_cif_to_lammps(stepdir)
-            lmp_energy_calculator(stepdir, 'eam/alloy', lammps_pot, lammps_path, lammps_in)
-            lmp_elastic_calculator(stepdir, 'eam/alloy', lammps_pot, lammps_path, lammps_in)
 
+            convert_cif_to_lammps(stepdir)
+            initial_energies, final_energies = lmp_energy_calculator(stepdir, 'eam/alloy', lammps_pot, lammps_path, lammps_in)
+            elastic_vectors = lmp_elastic_calculator(stepdir, 'eam/alloy', lammps_pot, lammps_path, lammps_in)
+
+            raw_lammps_path = os.path.join(stepdir, 'lammps_data')
+            relaxed_lammps_path = os.path.join(stepdir, 'lammps_data', 'relaxed-structures')
+            structure_names = sorted(os.listdir(relaxed_lammps_path), key=lambda s: int(re.search('\d+', s).group()))
 
             timer['lammps'], cur_time = timer['lammps'] + time.time() - cur_time, time.time()
+            cif_lmp = lammps_data_to_cif(structure_names, raw_lammps_path, relaxed_lammps_path)
+            prop_lmp = [el[3] for el in elastic_vectors]
             # --------------- New datasets --------------------
-            dataset = AdHocCrystDataset('identity_test_dataset', cif_lmp, prop_lmp, niggli, primitive,
-                                        graph_method, preprocess_workers, lattice_scale_method)
-            new_train, new_val, new_structures = [copy.deepcopy(dataset) for i in range(3)] #this is so that the model fits closely to new examples
+            new_dataset = AdHocCrystDataset('identity_test_dataset', cif_lmp, prop_lmp, niggli, primitive,
+                                            graph_method, preprocess_workers, lattice_scale_method,
+                                            prop_name='ealstic_vector',
+                                            scaler=loaders[0].dataset.scaler,
+                                            lattice_scaler=loaders[0].dataset.lattice_scaler)
+
+            new_train, new_val, new_structures = [copy.deepcopy(new_dataset) for i in
+                                                  range(3)]  # this is so that the model fits closely to new examples
             # the accuracy growth is visible in val, and the new examples are further optimize with that fitting finished
             for callback in trainer.callbacks:
                 if isinstance(callback, ModelCheckpoint):
@@ -854,20 +868,19 @@ def main(args):
             cur_train_loader, cur_val_loader, cur_structure_loader = (
                 DataLoader(merge_datasets_cryst(cur_train_loader.dataset, new_train),
                            batch_size=cur_train_loader.batch_size, shuffle=True),
-                DataLoader(merge_datasets_cryst(cur_val_loader.dataset, new_val),
-                           batch_size=cur_train_loader.batch_size, shuffle=True),
-                DataLoader(merge_datasets_cryst(cur_structure_loader.dataset, new_structures),
-                           batch_size=cur_train_loader.batch_size, shuffle=True)
+                copy.deepcopy(loaders[1]),
+                DataLoader(new_structures, batch_size=cur_train_loader.batch_size, shuffle=False)
             )
 
 
             # --------------- Retraining ----------------------
-            trainer.fit(model, train_dataloader=cur_train_loader, val_dataloaders=cur_val_loader)
+            #model = load_model(model_path)[0]
+            #trainer.fit(model, train_dataloader=cur_train_loader, val_dataloaders=cur_val_loader)
 
             # Load the best checkpoint
-            best_model_path = trainer.checkpoint_callback.best_model_path
-            model.load_state_dict(torch.load(best_model_path))
-            timer['retrain'], cur_time = timer['retrain'] + time.time() - cur_time, time.time()
+            #best_model_path = trainer.checkpoint_callback.best_model_path
+            #model.load_state_dict(torch.load(best_model_path))
+            #timer['retrain'], cur_time = timer['retrain'] + time.time() - cur_time, time.time()
         return timer
 
 if __name__ == '__main__':

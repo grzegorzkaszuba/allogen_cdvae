@@ -314,6 +314,7 @@ class CDVAE(BaseModule):
     def forward(self, batch, teacher_forcing, training):
         # hacky way to resolve the NaN issue. Will need more careful debugging later.
         mu, log_var, z = self.encode(batch)
+        #print(np.sum(np.array([p.requires_grad for p in self.parameters()])))
 
         (pred_num_atoms, pred_lengths_and_angles, pred_lengths, pred_angles,
          pred_composition_per_atom) = self.decode_stats(
