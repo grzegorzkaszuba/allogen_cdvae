@@ -7,6 +7,7 @@ from ase.io import read, write, lammpsdata  # used for reading CIF files and wri
 
 from pymatgen.io.cif import CifWriter
 from pymatgen.io.ase import AseAtomsAdaptor
+import subprocess
 
 import os
 from pathlib import Path
@@ -53,9 +54,8 @@ def update_lammps_data_file(lammps_file, atoms):
     return symbols
 
 
-def convert_cif_to_lammps(source_dir):
+def convert_cif_to_lammps(source_dir, target_dir):
     # Define target directory
-    target_dir = os.path.join(source_dir, 'lammps_data')
     Path(target_dir).mkdir(parents=True, exist_ok=True)
 
     # Get a list of all CIF files in the source directory
@@ -94,8 +94,8 @@ def extract_initial_final_energy(filename):
         lines = f.readlines()
 
     # Initialize energy values as None
-    initial_energy = final_energy = None
-
+    initial_energy = None
+    final_energy = None
     # Iterate over the lines in the log file
     for i, line in enumerate(lines):
         # If the line contains "Energy initial", the next line contains the energy value
@@ -126,13 +126,20 @@ def modify_file(file_path, lines_to_search, replacement_lines):
                     if replace_line[0] == line:
                         lines[i] = replace_line[1] + "\n"
     return lines
-def lmp_energy_calculator(source_dir, pot, pot_name, lammps_command, lammps_inputs_dir):
+def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False):
     """minimises the structures and calculates the energy"""
-    initial_energies = []
-    final_energies = []
+    (pot, pot_file, lammps_command, lammps_inputs_dir) = (
+        lammps_cfg['pot'],
+        lammps_cfg['pot_file'],
+        lammps_cfg['lammps_path'],
+        lammps_cfg['input_template']
+    )
+
+    initial_energies = {}
+    final_energies = {}
     # Defining the paths for our directories
-    relaxed_structures_dir = os.path.join(source_dir, "lammps_data", "relaxed-structures")
-    folder_path = os.path.join(source_dir, "lammps_data")
+    relaxed_structures_dir = target_dir
+    folder_path = source_dir
 
     # Creating the directories if they do not exist
     Path(relaxed_structures_dir).mkdir(parents=True, exist_ok=True)
@@ -155,7 +162,7 @@ def lmp_energy_calculator(source_dir, pot, pot_name, lammps_command, lammps_inpu
 
         modification_lines = [
             ('pair_style', f'pair_style {pot}'),
-            ('pair_coeff', 'pair_coeff * * ' + os.path.join(os.getcwd(), pot_name) + f' {elms}'),
+            ('pair_coeff', 'pair_coeff * * ' + os.path.join(os.getcwd(), pot_file) + f' {elms}'),
             ("read_data", f"read_data {os.path.join(folder_path, name)}"),
             ('wd', f'write_data {os.path.join(relaxed_structures_dir, name)}')]
 
@@ -169,9 +176,9 @@ def lmp_energy_calculator(source_dir, pot, pot_name, lammps_command, lammps_inpu
 
         root_dir = os.getcwd()
 
-
-        print('printing lammps command')
-        print(f'{lammps_command} -in {os.path.join(lmp_task_dir, f"in.{name}_min")}')
+        if not silent:
+            print('printing lammps command')
+            print(f'{lammps_command} -in {os.path.join(lmp_task_dir, f"in.{name}_min")}')
 
         # controlling the directories
 
@@ -179,9 +186,13 @@ def lmp_energy_calculator(source_dir, pot, pot_name, lammps_command, lammps_inpu
         assert 'RELAXATIONTASKHERE' in os.listdir()
 
         # run the simulation and get the energy
-        os.system(f'{lammps_command} -in {os.path.join(lmp_task_dir, f"in.{name}_min")}')
+        if silent:
+            subprocess.call(f'{lammps_command} -in {os.path.join(lmp_task_dir, f"in.{name}_min")}', stdout=open(os.devnull, 'wb'))
+        else:
+            os.system(f'{lammps_command} -in {os.path.join(lmp_task_dir, f"in.{name}_min")}')
         initial_energy, final_energy = extract_initial_final_energy('log.lammps')
-        initial_energies.append(initial_energy), final_energies.append(final_energy)
+        initial_energies[name.split('.')[0]] = initial_energy
+        final_energies[name.split('.')[0]] = final_energy
 
         os.remove(new_input_file), os.remove('log.lammps')
         os.chdir(root_dir)
@@ -189,12 +200,19 @@ def lmp_energy_calculator(source_dir, pot, pot_name, lammps_command, lammps_inpu
     #return prop, df
     return initial_energies, final_energies
 
-def lmp_elastic_calculator(source_dir, pot, pot_name, lammps_command, lammps_inputs_dir):
+def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False):
     """minimises the structures and calculates the elastic vector"""
 
-    elastic_vectors = []
+    (pot, pot_file, lammps_command, lammps_inputs_dir) = (
+        lammps_cfg['pot'],
+        lammps_cfg['pot_file'],
+        lammps_cfg['lammps_path'],
+        lammps_cfg['input_template']
+    )
+
+    elastic_vectors = {}
     # Defining the paths for our directories
-    folder_path = os.path.join(source_dir, "lammps_data")
+    folder_path = source_dir # todo this could be relaxed-structures
 
 
     # list of available structures
@@ -217,7 +235,7 @@ def lmp_elastic_calculator(source_dir, pot, pot_name, lammps_command, lammps_inp
         modification_init = [("read_data", f"read_data {os.path.join(folder_path, name)}")]
         modification_pot = [
             ('pair_style', f'pair_style {pot}'),
-            ('pair_coeff', 'pair_coeff * * ' + os.path.join(os.getcwd(), pot_name) + f' {elms}')
+            ('pair_coeff', 'pair_coeff * * ' + os.path.join(os.getcwd(), pot_file) + f' {elms}')
         ]
 
         # modify the files
@@ -235,11 +253,14 @@ def lmp_elastic_calculator(source_dir, pot, pot_name, lammps_command, lammps_inp
         os.chdir(output_file)
         assert 'PREDICTIONTASKHERE' in os.listdir()
         # run the simulation
-        os.system(f"{lammps_command} -in {os.path.join(os.getcwd(), 'in.elastic')}")
+        if silent:
+            subprocess.call(f"{lammps_command} -in {os.path.join(os.getcwd(), 'in.elastic')}", stdout=open(os.devnull, 'wb'))
+        else:
+            os.system(f"{lammps_command} -in {os.path.join(os.getcwd(), 'in.elastic')}")
 
         # extract elastic_vector from the log file
         elastic_vector = extract_elastic_vector("log.lammps")
-        elastic_vectors.append(elastic_vector)
+        elastic_vectors[name.split('.')[0]] = elastic_vector
 
         # clean up
         os.remove(os.path.join(output_file, 'init.mod'))
@@ -270,7 +291,7 @@ def extract_elastic_vector(log_file):
 def extract_element_types(f):
     return f.readlines()[0].strip().split(' ')
 
-def lammps_data_to_cif(structure_names, raw_path, relaxed_path):
+def lammps_data_to_cif(structure_names, raw_path, relaxed_path, savedir=None):
     cif_strings = []
     for name in structure_names:
         # Read LAMMPS data file
@@ -291,4 +312,6 @@ def lammps_data_to_cif(structure_names, raw_path, relaxed_path):
         # Write CIF file using CifWriter
         cif_writer = CifWriter(structure)
         cif_strings.append(cif_writer.__str__())
+        if savedir is not None:
+            structure.to(filename=os.path.join(savedir, name+'.cif'), fmt='cif')
     return cif_strings

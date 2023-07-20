@@ -7,6 +7,8 @@ from ase.visualize import view
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 
+import re
+
 def cif_names_list(timesteps, datapoints):
     def cif_names_gen(timestep, datapoints):
         for i in range(datapoints):
@@ -36,6 +38,84 @@ def visualize_structure(lattice_lengths, lattice_angles, atom_numbers, atom_coor
     # Visualize the structure
     view(structure_ase)
 
+def extract_atom_counts(cif_file, elements):
+    try:
+        with open(cif_file, 'r') as file:
+            for line in file:
+                if line.startswith('_chemical_formula_sum'):
+                    # Extract element counts from the line
+                    formula = line.split('\'')[1]  # Get the string between quotes
+
+                    counts = []
+                    for elem in elements:
+                        search = re.search(fr'{elem}(\d*)', formula)
+                        if search:
+                            count = int(search.group(1)) if search.group(1) != '' else 1
+                        else:
+                            count = 0
+                        counts.append(count)
+            return tuple(counts)
+    except:
+        emergency_out = [10 for i in range(len(elements))]
+        emergency_out[0] = -1
+        return tuple(emergency_out)
+
+import matplotlib.pyplot as plt
+import mpltern
+import numpy as np
+from torch.utils.tensorboard import SummaryWriter
+from PIL import Image
+import io
+
+def plot_atom_ratios_mpltern(atom_counts, property=None, writer=None, global_step=None, save_label=''):
+    # Calculate atom ratios
+    atom_ratios = [[count / sum(counts) for count in counts] for counts in atom_counts]
+
+    # Separate the ratios into separate lists for each element
+    cr_ratios = [ratios[0] for ratios in atom_ratios]
+    fe_ratios = [ratios[1] for ratios in atom_ratios]
+    ni_ratios = [ratios[2] for ratios in atom_ratios]
+
+    # Create ternary plot
+    fig, tax = plt.subplots(subplot_kw={'projection': 'ternary'})
+
+    # Set labels and title
+    tax.set_tlabel("Cr %")
+    tax.set_llabel("Fe %")
+    tax.set_rlabel("Ni %")
+
+    # Plot points
+    sc = tax.scatter(cr_ratios, fe_ratios, ni_ratios, marker='o', c=property, cmap='viridis')
+
+    # Add colorbar if property is defined
+    if property is not None:
+        plt.subplots_adjust(right=0.8)  # Make space for colorbar
+        cax = plt.axes([0.85, 0.1, 0.03, 0.8])  # Specify the position and size of colorbar
+        fig.colorbar(sc, cax=cax, label='Property')
+
+    # Add grid
+    tax.grid(color='lightblue')
+
+    # If writer is defined, log the plot to TensorBoard, otherwise show the plot
+    if writer is not None:
+        # Convert the plot to a PIL Image
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        img = Image.open(buf)
+
+        # Convert the PIL Image to a numpy array
+        img_arr = np.array(img)
+
+        # Log the image
+        writer.add_image('Ternary Plot', img, global_step=global_step)
+
+        # Close the figure to free memory
+        plt.close(fig)
+    else:
+        # Show plot
+        plt.savefig(save_label + '.png')
+        plt.close(fig)
 
 
 def save_scatter_plot(pred, label, writer, name, plot_title=None):

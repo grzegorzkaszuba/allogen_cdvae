@@ -7,12 +7,11 @@ from torch.optim import Adam
 from pathlib import Path
 from types import SimpleNamespace
 
-
-from eval_utils import load_model, load_model_full, load_tensor_data, prop_model_eval, get_crystals_list, get_cryst_loader, tensors_to_structures
-from visualization_utils import save_scatter_plot, cif_names_list
+from eval_utils import load_model, load_model_full, load_tensor_data, prop_model_eval, get_crystals_list, \
+    get_cryst_loader, tensors_to_structures
+from visualization_utils import save_scatter_plot, cif_names_list, extract_atom_counts, plot_atom_ratios_mpltern
 from amir_lammps import lammps_pot, lammps_in, convert_cif_to_lammps, lammps_data_to_cif, lmp_energy_calculator, \
     lmp_elastic_calculator
-
 
 import os
 import re
@@ -22,12 +21,13 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 import math
+from statistics import mean
 import pytorch_lightning as pl
 
 from evaluate import reconstructon, generation, optimization
 from cdvae.pl_data.dataset import AdHocCrystDataset
 
-#from gaussian_process import get_gaussian_regressor, get_uncertainty
+# from gaussian_process import get_gaussian_regressor, get_uncertainty
 
 import numpy as np
 import subprocess
@@ -44,6 +44,12 @@ from pymatgen.io.lammps.data import LammpsData
 import tempfile
 from ase.io import read
 
+from conditions import Condition, ZLoss, filter_step_data
+from mutations import Transposition, Transmutation
+
+
+
+
 
 def read_cif_from_strings(cif_strings):
     structures = []
@@ -55,11 +61,13 @@ def read_cif_from_strings(cif_strings):
             structures.append(structure)
     return structures
 
+
 def merge_datasets_cryst(dataset1, dataset2):
     # Merge the two lists
     new_dataset = copy.deepcopy(dataset1)
-    new_dataset.cached_data = new_dataset.cached_data + copy.deepcopy(dataset2.cached_data)
+    new_dataset.cached_data = copy.deepcopy(new_dataset.cached_data + dataset2.cached_data)
     return new_dataset
+
 
 def run_lammps_simulation(cif_str, lammps_path):
     # Create a temporary file
@@ -111,10 +119,11 @@ def dictionary_cat(d, dim=0):
             if type(v[0]) == torch.Tensor:
                 d[k] = torch.cat(v, dim=dim)
 
+
 def optimization_by_batch(model, ld_kwargs, batch,
-                 num_starting_points=100, num_gradient_steps=5000,
-                 lr=1e-3, num_saved_crys=10, extra_returns=False, extra_breakpoints=(),
-                 maximize=False):
+                          num_starting_points=100, num_gradient_steps=5000,
+                          lr=1e-3, num_saved_crys=10, extra_returns=False, extra_breakpoints=(),
+                          maximize=False, z_losses=()):
     if batch is not None:
         batch = batch.to(model.device)
         _, _, z = model.encode(batch)
@@ -130,7 +139,7 @@ def optimization_by_batch(model, ld_kwargs, batch,
 
     all_crystals = []
     if num_saved_crys > 1:
-        interval = num_gradient_steps // (num_saved_crys-1)
+        interval = num_gradient_steps // (num_saved_crys - 1)
     else:
         interval = -1
     if extra_returns:
@@ -139,6 +148,7 @@ def optimization_by_batch(model, ld_kwargs, batch,
         breakpoints = []
         cbf_storage = [None]
         cbf_list = []
+
         def cbf_hook_fn(module, input, output):
             cbf_storage[0] = module.current_cbf
 
@@ -150,19 +160,23 @@ def optimization_by_batch(model, ld_kwargs, batch,
             loss = -model.fc_property(z).mean()
         else:
             loss = model.fc_property(z).mean()
+        for z_loss in z_losses:
+            loss = loss + z_loss(z)
         loss.backward()
         opt.step()
-        if extra_returns:
-            recent_z = z.detach().cpu()
-            recent_property = model.fc_property(z).detach().cpu()
+        #if extra_returns:
+        #    recent_z = z.detach().cpu()
+        #    recent_property = model.inverse_transform(model.fc_property(z)).detach().cpu()
 
-        if (i % interval == 0 and interval != -1) or i == (num_gradient_steps-1) or i in extra_breakpoints:
+        if (i % interval == 0 and interval != -1) or i == (num_gradient_steps - 1) or i in extra_breakpoints:
 
             crystals = model.langevin_dynamics(z, ld_kwargs)
             if extra_returns:
+                recent_z = z.detach().cpu()
+                recent_property = model.scaler.inverse_transform(model.fc_property(z)).detach().cpu()
                 breakpoints.append(i)
-                z_list.append(z.detach().cpu())
-                properties_list.append(model.fc_property(z))
+                z_list.append(recent_z)
+                properties_list.append(recent_property)
 
                 cbf_list.append(cbf_storage[0])
             all_crystals.append(crystals)
@@ -170,13 +184,13 @@ def optimization_by_batch(model, ld_kwargs, batch,
         z_list = torch.stack(z_list, dim=0)
         properties_list = torch.stack(properties_list, dim=0)
         cbf_list = torch.stack(cbf_list, dim=0)
-        #breakpoints = torch.tensor(breakpoints)
+        # breakpoints = torch.tensor(breakpoints)
         return {k: torch.cat([d[k] for d in all_crystals]).unsqueeze(0) for k in
-                ['frac_coords', 'atom_types', 'num_atoms', 'lengths', 'angles']}, z_list, properties_list, breakpoints, cbf_list
+                ['frac_coords', 'atom_types', 'num_atoms', 'lengths',
+                 'angles']}, z_list, properties_list, breakpoints, cbf_list
 
     return {k: torch.cat([d[k] for d in all_crystals]).unsqueeze(0) for k in
             ['frac_coords', 'atom_types', 'num_atoms', 'lengths', 'angles']}
-
 
 
 def opt_chunk_generator(data, chunk_size):
@@ -224,14 +238,14 @@ def test_prop_fc(model, ld_kwargs, data_loader,
     model.freeze()
 
     all_crystals = []
-    interval = num_gradient_steps // (num_saved_crys-1)
+    interval = num_gradient_steps // (num_saved_crys - 1)
     for i in tqdm(range(num_gradient_steps)):
         opt.zero_grad()
         loss = model.fc_property(z).mean()
         loss.backward()
         opt.step()
 
-        if i % interval == 0 or i == (num_gradient_steps-1):
+        if i % interval == 0 or i == (num_gradient_steps - 1):
             crystals = model.langevin_dynamics(z, ld_kwargs)
             all_crystals.append(crystals)
     return {k: torch.cat([d[k] for d in all_crystals]).unsqueeze(0) for k in
@@ -241,6 +255,7 @@ def test_prop_fc(model, ld_kwargs, data_loader,
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+
 def main(args):
     prop_model = None
 
@@ -249,8 +264,6 @@ def main(args):
         prop_model, _, prop_cfg = load_model(prop_model_path)
         prop_model.to('cuda')
         print('prop_model_parameters', count_parameters(prop_model))
-
-
 
     model_path = Path(args.model_path)
 
@@ -262,13 +275,10 @@ def main(args):
                                 save_traj=args.save_traj,
                                 disable_bar=args.disable_bar)
 
-
     if torch.cuda.is_available():
         model.to('cuda')
 
-
     writer_path = os.path.join(model_path, 'logs')
-
 
     # write dummy figure to tensorboard
 
@@ -287,11 +297,13 @@ def main(args):
             properties = torch.cat(properties, dim=0)
             property_labels = torch.cat(property_labels, dim=0)
             loss_pred = torch.nn.functional.mse_loss(properties, property_labels)
-            save_scatter_plot(properties.detach().cpu(), property_labels.detach().cpu(), writer, 'enc_prop_'+dset+' mse: '+str(loss_pred))
+            save_scatter_plot(properties.detach().cpu(), property_labels.detach().cpu(), writer,
+                              'enc_prop_' + dset + ' mse: ' + str(loss_pred))
         writer.close()
 
     if 'enc_dec_prop' in args.tasks:
-        print('Evaluate the combination of CDVAE and outside prediction module on the task of encoding -> decoding -> property prediction')
+        print(
+            'Evaluate the combination of CDVAE and outside prediction module on the task of encoding -> decoding -> property prediction')
         recon_data_path = os.path.join(model_path, 'eval_recon.pt')
         recon_data = torch.load(recon_data_path)
         recon_crystals_list = get_crystals_list(recon_data['frac_coords'][0],
@@ -300,7 +312,7 @@ def main(args):
                                                 recon_data['angles'][0],
                                                 recon_data['num_atoms'][0])
         predictions = prop_model_eval('perovskite', recon_crystals_list)
-        properties_dec = torch.tensor(predictions).reshape(-1,1)
+        properties_dec = torch.tensor(predictions).reshape(-1, 1)
 
         writer = SummaryWriter(os.path.join(writer_path, 'enc_dec_prop'))
         for n, dset in enumerate(['test']):
@@ -315,15 +327,19 @@ def main(args):
                 property_labels.append(batch.y.cpu())
             properties = torch.cat(properties, dim=0)
             property_labels = torch.cat(property_labels, dim=0)
-            #properties_dec = torch.cat(properties_dec, dim=0)
+            # properties_dec = torch.cat(properties_dec, dim=0)
             loss_pred = torch.nn.functional.mse_loss(properties, property_labels)
             loss_pred_dec = torch.nn.functional.mse_loss(properties_dec, property_labels)
-            save_scatter_plot(properties.numpy(), property_labels.detach().numpy(), writer, dset+ ' set gemprop mse '+str(loss_pred.item()), plot_title='Loss from data')
-            save_scatter_plot(properties_dec.numpy(), property_labels.detach().numpy(), writer, dset+ ' set recon + gemprop_mse: '+str(loss_pred_dec.item()), plot_title='Loss from reconstructed data')
+            save_scatter_plot(properties.numpy(), property_labels.detach().numpy(), writer,
+                              dset + ' set gemprop mse ' + str(loss_pred.item()), plot_title='Loss from data')
+            save_scatter_plot(properties_dec.numpy(), property_labels.detach().numpy(), writer,
+                              dset + ' set recon + gemprop_mse: ' + str(loss_pred_dec.item()),
+                              plot_title='Loss from reconstructed data')
         writer.close()
 
     if 'enc_dec_traj' in args.tasks:
-        print('Evaluate CDVAE and outside prediction module on the task of encoding -> decoding -> property prediction on different steps of structure optimization')
+        print(
+            'Evaluate CDVAE and outside prediction module on the task of encoding -> decoding -> property prediction on different steps of structure optimization')
         recon_data_path = os.path.join(model_path, 'eval_recon_traj2b_20se.pt')
         recon_data = torch.load(recon_data_path)
         assert 'all_atom_types_stack' in recon_data, 'Error: the provided data do not contain Langevin dynamics trajectories!'
@@ -354,7 +370,8 @@ def main(args):
                 properties = torch.cat(properties, dim=0)
                 property_labels = torch.cat(property_labels, dim=0)
                 loss_pred = torch.nn.functional.mse_loss(properties, property_labels)
-                writer.add_text('Description', f'Loss trajectory on {dset} set, mse on original structures {loss_pred:.5f}')
+                writer.add_text('Description',
+                                f'Loss trajectory on {dset} set, mse on original structures {loss_pred:.5f}')
             loss_pred_dec = torch.nn.functional.mse_loss(properties_dec, property_labels)
 
             writer.add_scalar('Loss trajectory', loss_pred_dec.item(), step)
@@ -374,9 +391,10 @@ def main(args):
             properties = torch.cat(properties, dim=0)
             property_labels = torch.cat(property_labels, dim=0)
             loss_pred = torch.nn.functional.mse_loss(properties, property_labels)
-            save_scatter_plot(properties.cpu().numpy(), property_labels.cpu().numpy(), writer, 'gemprop_'+dset+'mse: '+str(loss_pred.item()), plot_title='GNN loss on original structure')
+            save_scatter_plot(properties.cpu().numpy(), property_labels.cpu().numpy(), writer,
+                              'gemprop_' + dset + 'mse: ' + str(loss_pred.item()),
+                              plot_title='GNN loss on original structure')
         writer.close()
-
 
     if 'get_embeddings' in args.tasks:
         save_path = os.path.join(model_path, 'train_z')
@@ -391,7 +409,7 @@ def main(args):
         torch.save(embeddings, save_path)
 
     if 'retrain_val' in args.tasks:
-        #writer = SummaryWriter(os.path.join(writer_path, 'retrain'))
+        # writer = SummaryWriter(os.path.join(writer_path, 'retrain'))
         # compute losses on validation set
         val_losses = []
         crystals = []
@@ -403,11 +421,11 @@ def main(args):
             if torch.cuda.is_available():
                 batch.cuda()
             prop = prop_model(batch)
-            loss = (prop-batch.y)**2
+            loss = (prop - batch.y) ** 2
             val_losses.append(loss.detach().cpu())
         labels = torch.cat(labels, dim=0).reshape(-1, 1)
         val_losses = torch.cat(val_losses, dim=0).reshape(-1)
-        worst_predictions = val_losses.topk(math.ceil(val_losses.shape[0]*0.2)).indices
+        worst_predictions = val_losses.topk(math.ceil(val_losses.shape[0] * 0.2)).indices
         worst_mask = torch.zeros(len(crystals), dtype=torch.bool)
         worst_mask[worst_predictions] = True
 
@@ -425,7 +443,6 @@ def main(args):
         retrain_loader = get_cryst_loader(retrain_crystal_list, cfg, prop_model.scaler)
         new_val_loader = get_cryst_loader(new_val_crystal_list, cfg, prop_model.scaler)
 
-
         trainer = pl.Trainer(
             default_root_dir=os.path.join(writer_path, 'retraining'),
             logger=True,
@@ -439,7 +456,6 @@ def main(args):
 
         trainer.fit(model=prop_model, train_dataloader=retrain_loader, val_dataloaders=loaders[0])
         trainer.test(model=prop_model, test_dataloaders=loaders[1])
-
 
     if 'bayesian_gen' in args.tasks:
         print('Randomly generate new structures, predict their properties and assign uncertainty to those predictions')
@@ -544,7 +560,6 @@ def main(args):
         plt.show()
     '''
 
-
     if 'gen_cif' in args.tasks:
         print('Generate structures from randomly created embeddings, create cif files and compute their properties')
         start_time = time.time()
@@ -559,12 +574,11 @@ def main(args):
         else:
             gen_out_name = f'eval_gen_cif_{args.label}.pt'
 
-
         gen_crystals_list = get_crystals_list(frac_coords[0],
-                                                atom_types[0],
-                                                lengths[0],
-                                                angles[0],
-                                                num_atoms[0])
+                                              atom_types[0],
+                                              lengths[0],
+                                              angles[0],
+                                              num_atoms[0])
         retrain_loader = get_cryst_loader(gen_crystals_list, prop_cfg, prop_model.scaler, batch_size=args.batch_size)
 
         predictions = []
@@ -575,7 +589,6 @@ def main(args):
             properties = prop_model.scaler.inverse_transform(pred)
             predictions.append(properties.detach().cpu())
         predictions = torch.cat(predictions, dim=0)
-
 
         torch.save({
             'eval_setting': args,
@@ -599,8 +612,6 @@ def main(args):
         for i, structure in enumerate(structure_objects):
             # Write structure to CIF file
             structure.to(filename=os.path.join(cif_path, f'generated{i}.cif'), fmt='cif')
-
-
 
     if 'opt_cif' in args.tasks:
         print('Run opt_cif multiple times')
@@ -626,26 +637,25 @@ def main(args):
             if n == n_batches and n_batches > 0:
                 break
             opt_out, z, fc_properties, optimization_breakpoints, cbf = optimization_by_batch(model, ld_kwargs, batch,
-                                                                               num_starting_points=100,
-                                                                               num_gradient_steps=5000,
-                                                                               lr=1e-3, num_saved_crys=3,
-                                                                               extra_returns=True, maximize=True,
-                                                                               extra_breakpoints=extra_breakpoints)
+                                                                                             num_starting_points=100,
+                                                                                             num_gradient_steps=5000,
+                                                                                             lr=1e-3, num_saved_crys=3,
+                                                                                             extra_returns=True,
+                                                                                             maximize=True,
+                                                                                             extra_breakpoints=extra_breakpoints)
 
             n_generated_structures = batch.num_atoms.cpu().shape[0]
             chonker = opt_chunk_generator(opt_out, n_generated_structures)
 
-
             batch_output = {'frac_coords': [],
-                           'num_atoms': [],
-                           'atom_types': [],
-                           'lengths': [],
-                           'angles': [],
-                           'z': z,
+                            'num_atoms': [],
+                            'atom_types': [],
+                            'lengths': [],
+                            'angles': [],
+                            'z': z,
                             'fc_properties': fc_properties,
-                           'cif': [],
+                            'cif': [],
                             'cbf': cbf}
-
 
             for chunk, bp in zip(chonker, optimization_breakpoints):
                 step_output = {
@@ -663,24 +673,26 @@ def main(args):
 
                 for j, structure in enumerate(structure_objects):
                     # Write structure to CIF file
-                    structure.to(filename=os.path.join(task_path, f'generated{j+total_generated_structures}_step{bp}.cif'), fmt='cif')
+                    structure.to(
+                        filename=os.path.join(task_path, f'generated{j + total_generated_structures}_step{bp}.cif'),
+                        fmt='cif')
 
                     cif_writer = CifWriter(structure)
                     cif_string = cif_writer.__str__()
                     step_output['cif'].append(cif_string)
 
-
                 for k, v in step_output.items():
                     batch_output[k].append(step_output[k])
 
-            #dictionary_cat(batch_output, dim=0)
+            # dictionary_cat(batch_output, dim=0)
             for k, v in batch_output.items():
                 output_dict[k].append(batch_output[k])
             total_generated_structures += n_generated_structures
 
-        #dictionary_cat(output_dict, dim=1)
+        # dictionary_cat(output_dict, dim=1)
         output_dict['breakpoints'] = optimization_breakpoints
         torch.save(output_dict, os.path.join(task_path, 'data.pt'))
+
 
     if 'opt_retrain' in args.tasks:
         start_time = time.time()
@@ -688,9 +700,10 @@ def main(args):
                  'optimize': 0,
                  'retrain': 0,
                  'lammps': 0}
+        best_by_composition = {}
         path_out = os.path.join(model_path, f'retrain_{args.label}')
+        writer = SummaryWriter(path_out)
         num_steps = 10
-        epochs_per_step = 5
 
         (niggli, primitive, graph_method, preprocess_workers, lattice_scale_method) = (
             cfg.data.datamodule.datasets.train.niggli,
@@ -704,17 +717,16 @@ def main(args):
         cur_val_loader = copy.deepcopy(loaders[1])
         cur_structure_loader = copy.deepcopy(loaders[2])
 
-        lammps_path = '"C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"'
+
 
         os.makedirs(path_out, exist_ok=True)
         callbacks = [ModelCheckpoint(
-                    dirpath=path_out,
-                    monitor=cfg.train.monitor_metric,
-                    mode=cfg.train.monitor_metric_mode,
-                    save_top_k=cfg.train.model_checkpoints.save_top_k,
-                    verbose=cfg.train.model_checkpoints.verbose,
-            )]
-
+            dirpath=path_out,
+            monitor=cfg.train.monitor_metric,
+            mode=cfg.train.monitor_metric_mode,
+            save_top_k=cfg.train.model_checkpoints.save_top_k,
+            verbose=cfg.train.model_checkpoints.verbose,
+        )]
 
         # --------------------------- trainer setup -----------------------------
         # Convert Namespace to dict
@@ -743,15 +755,24 @@ def main(args):
 
         timer['setup'], cur_time = timer['setup'] + time.time() - start_time, time.time()
 
-
-
-        for i in range(num_steps):
+        for step in range(num_steps):
             # ------------------ Cycle setup ------------------
             n_structures_retrain = 0
-            stepdir = os.path.join(path_out, str(i))
-            os.makedirs(stepdir, exist_ok=True)
+            stepdir = os.path.join(path_out, str(step))
+            cif_dir = os.path.join(stepdir, 'cif_raw')
+            lammpsdata_dir = os.path.join(stepdir, 'lammps_raw')
+            relaxed_cif_dir = os.path.join(stepdir, 'cif_relaxed')
+            relaxed_lammpsdata_dir = os.path.join(stepdir, 'lammps_relaxed')
             chkdir = os.path.join(stepdir, 'checkpoints')
-            os.makedirs(chkdir, exist_ok=True)
+            pt_dir = os.path.join(stepdir, 'pt')
+            for directory in [stepdir, cif_dir, lammpsdata_dir, relaxed_cif_dir, relaxed_lammpsdata_dir, chkdir, pt_dir]:
+                os.makedirs(directory, exist_ok=True)
+
+            lammps_cfg = {
+                'lammps_path': '"C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"',
+                'pot_file': lammps_pot,
+                'input_template': lammps_in,
+                'pot': 'eam/alloy'}
 
             output_dict = {'eval_setting': args,
                            'frac_coords': [],
@@ -766,9 +787,13 @@ def main(args):
                            'cbf': []}
 
             # ------------------ Optimization step ------------------------------
+            all_fc_properties = []
+            starting_data = []
             for n, batch in enumerate(cur_structure_loader):
                 if n > 2:
                     continue
+                    if step == 0:
+                        starting_data.append('take element comp and label from batch')
                 opt_out, z, fc_properties, optimization_breakpoints, cbf = optimization_by_batch(model, ld_kwargs,
                                                                                                  batch,
                                                                                                  num_starting_points=100,
@@ -791,6 +816,7 @@ def main(args):
                                 'cif': [],
                                 'cbf': cbf}
 
+                all_fc_properties.append(fc_properties)
                 for chunk, bp in zip(chonker, optimization_breakpoints):
                     step_output = {
                         'frac_coords': chunk['frac_coords'],
@@ -810,7 +836,7 @@ def main(args):
                     for j, structure in enumerate(structure_objects):
                         # Write structure to CIF file
                         structure.to(
-                            filename=os.path.join(stepdir, f'generated{j + n_structures_retrain}_step{bp}.cif'),
+                            filename=os.path.join(cif_dir, f'generated{j + n_structures_retrain}_step{bp+step*(bp+1)}.cif'),
                             fmt='cif')
 
                         cif_writer = CifWriter(structure)
@@ -825,8 +851,7 @@ def main(args):
                 n_structures_retrain += n_generated_structures
                 # --------------------- Batch end ----------------------
 
-
-            torch.save(output_dict, os.path.join(stepdir, 'data.pt'))
+            torch.save(output_dict, os.path.join(pt_dir, 'data.pt'))
             timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
 
             # ---------------------- CIF ---------------------
@@ -837,18 +862,86 @@ def main(args):
             timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
             # ------------------- LAMMPS --------------------
 
+            convert_cif_to_lammps(cif_dir, lammpsdata_dir)
+            initial_energies, final_energies = lmp_energy_calculator(lammpsdata_dir, relaxed_lammpsdata_dir, lammps_cfg)
+            elastic_vectors = lmp_elastic_calculator(lammpsdata_dir, lammps_cfg)
 
-            convert_cif_to_lammps(stepdir)
-            initial_energies, final_energies = lmp_energy_calculator(stepdir, 'eam/alloy', lammps_pot, lammps_path, lammps_in)
-            elastic_vectors = lmp_elastic_calculator(stepdir, 'eam/alloy', lammps_pot, lammps_path, lammps_in)
+            # sort examples alphanumerically (default alphabetically)
+            structure_names = [n.split('.')[0] for n in
+                               sorted(os.listdir(relaxed_lammpsdata_dir), key=lambda s: int(re.search('\d+', s).group()))]
 
-            raw_lammps_path = os.path.join(stepdir, 'lammps_data')
-            relaxed_lammps_path = os.path.join(stepdir, 'lammps_data', 'relaxed-structures')
-            structure_names = sorted(os.listdir(relaxed_lammps_path), key=lambda s: int(re.search('\d+', s).group()))
 
-            timer['lammps'], cur_time = timer['lammps'] + time.time() - cur_time, time.time()
-            cif_lmp = lammps_data_to_cif(structure_names, raw_lammps_path, relaxed_lammps_path)
+            cif_lmp = lammps_data_to_cif([s_name + '.data' for s_name in structure_names], lammpsdata_dir,
+                                         relaxed_lammpsdata_dir, savedir=relaxed_cif_dir)
+
+
+            #sort outputs by alphanumeric order
+            initial_energies = [initial_energies[name] for name in structure_names]
+            final_energies = [final_energies[name] for name in structure_names]
+            elastic_vectors = [elastic_vectors[name] for name in structure_names]
+
             prop_lmp = [el[3] for el in elastic_vectors]
+            lammps_results = {'initial_energies': torch.tensor(initial_energies),
+                              'final_energies': torch.tensor(final_energies),
+                              'prop': torch.tensor(prop_lmp),
+                              'cif_lmp': cif_lmp}
+            torch.save(lammps_results, os.path.join(pt_dir, 'lammps_results.pt'))
+            timer['lammps'], cur_time = timer['lammps'] + time.time() - cur_time, time.time()
+            # ------------- Step logging ----------------
+            summary_formulas = [extract_atom_counts(os.path.join(stepdir, s + '.cif'), ['Cr', 'Fe', 'Ni']) for s in
+                                structure_names]
+            step_fc_properties = []
+            for fc in all_fc_properties:
+                step_fc_properties = step_fc_properties + fc.reshape(-1).tolist()
+            fc_errors = [abs(step_fc_properties[i]-prop_lmp[i]) for i in range(len(step_fc_properties))]
+            step_data = {'fc_properties': step_fc_properties,
+                         'initial_energies': initial_energies,
+                         'final_energies': final_energies,
+                         'structure_names': structure_names,
+                         'summary_formulas': summary_formulas,
+                         'elastic_vectors': prop_lmp,
+                         'index': list(range(len(prop_lmp))),
+                         'fc_errors': fc_errors}
+
+            conditions = [Condition('final_energies', -250, -200),
+                          Condition('elastic_vectors', 0, 500),
+                          Condition('summary_formulas', 0, 0.9)]
+
+            filtered_step_data = filter_step_data(step_data, conditions)
+
+            for i in range(len(filtered_step_data['elastic_vectors'])):
+                writer.add_scalar(f'generated/property/fc/case {filtered_step_data["index"][i]}',
+                                  filtered_step_data['fc_properties'][i], step)
+                writer.add_scalar(f'generated/property/lammps/case {filtered_step_data["index"][i]}',
+                                  filtered_step_data['elastic_vectors'][i], step)
+                writer.add_scalar(f'generated/property/fc-lammps error/case {filtered_step_data["index"][i]}',
+                                  filtered_step_data['fc_errors'][i], step)
+                writer.add_scalar(f'property/final energy/case {filtered_step_data["index"][i]}',
+                                  filtered_step_data['final_energies'][i], step)
+                writer.add_scalar(f'property/initial energy/case {filtered_step_data["index"][i]}',
+                                  filtered_step_data['initial_energies'][i], step)
+                if filtered_step_data['summary_formulas'][i] in best_by_composition.keys():
+                    if filtered_step_data['fc_properties'][i] > best_by_composition[filtered_step_data['summary_formulas'][i]]:
+                        best_by_composition[filtered_step_data['summary_formulas'][i]] = filtered_step_data['fc_properties'][i]
+                else:
+                    best_by_composition[filtered_step_data['summary_formulas'][i]] = filtered_step_data['fc_properties'][i]
+
+            if len(filtered_step_data['fc_properties']) > 0:
+                writer.add_scalar(f'mean_generated/property/fc', mean(filtered_step_data['fc_properties']), step)
+                writer.add_scalar(f'mean_generated/property/lammps', mean(filtered_step_data['elastic_vectors']), step)
+                writer.add_scalar(f'mean_generated/property/fc-lammps error', mean(filtered_step_data['fc_errors']),
+                                  step)
+                writer.add_scalar(f'mean_property/final energy', mean(filtered_step_data['final_energies']), step)
+                writer.add_scalar(f'mean_property/initial energy', mean(filtered_step_data['initial_energies']), step)
+
+                plot_atom_ratios_mpltern(filtered_step_data['summary_formulas'],
+                                         property=filtered_step_data['elastic_vectors'],
+                                         save_label=os.path.join(path_out, f'tri_step {step}'))
+
+            torch.save(step_data, os.path.join(stepdir, 'full_batch.pt'))
+            torch.save(filtered_step_data, os.path.join(stepdir, 'filtered_batch.pt'))
+            # fc_properties, initial_energies, final_energies, stepdir, structure_names
+
             # --------------- New datasets --------------------
             new_dataset = AdHocCrystDataset('identity_test_dataset', cif_lmp, prop_lmp, niggli, primitive,
                                             graph_method, preprocess_workers, lattice_scale_method,
@@ -867,21 +960,33 @@ def main(args):
 
             cur_train_loader, cur_val_loader, cur_structure_loader = (
                 DataLoader(merge_datasets_cryst(cur_train_loader.dataset, new_train),
-                           batch_size=cur_train_loader.batch_size, shuffle=True),
+                           batch_size=cur_train_loader.batch_size, shuffle=True,
+                           num_workers=loaders[0].num_workers),
                 copy.deepcopy(loaders[1]),
-                DataLoader(new_structures, batch_size=cur_train_loader.batch_size, shuffle=False)
+                DataLoader(new_structures, batch_size=cur_train_loader.batch_size, shuffle=False,
+                           num_workers=loaders[0].num_workers)
             )
 
-
             # --------------- Retraining ----------------------
-            #model = load_model(model_path)[0]
-            #trainer.fit(model, train_dataloader=cur_train_loader, val_dataloaders=cur_val_loader)
+            # model = load_model(model_path)[0]
+            # trainer.fit(model, train_dataloader=cur_train_loader, val_dataloaders=cur_val_loader)
 
             # Load the best checkpoint
-            #best_model_path = trainer.checkpoint_callback.best_model_path
-            #model.load_state_dict(torch.load(best_model_path))
-            #timer['retrain'], cur_time = timer['retrain'] + time.time() - cur_time, time.time()
-        return timer
+            # best_model_path = trainer.checkpoint_callback.best_model_path
+            # model.load_state_dict(torch.load(best_model_path))
+            # timer['retrain'], cur_time = timer['retrain'] + time.time() - cur_time, time.time()
+
+        final_comps = []
+        final_props = []
+        for k, v in best_by_composition.items():
+            final_comps.append(k)
+            final_props.append(v)
+        plot_atom_ratios_mpltern(final_comps,
+                                 final_props,
+                                 save_label=os.path.join(path_out, f'tri final'))
+        print(timer)
+
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
