@@ -78,8 +78,8 @@ def reconstructon(loader, model, ld_kwargs, num_evals,
     if ld_kwargs.save_traj:
         all_frac_coords_stack = torch.cat(all_frac_coords_stack, dim=2)
         all_atom_types_stack = torch.cat(all_atom_types_stack, dim=2)
-    input_data_batch = Batch.from_data_list(input_data_list)
-    #input_data_batch = None
+    #input_data_batch = Batch.from_data_list(input_data_list)
+    input_data_batch = None
     return (
         frac_coords, num_atoms, atom_types, lengths, angles,
         all_frac_coords_stack, all_atom_types_stack, input_data_batch)
