@@ -18,17 +18,24 @@ class Condition:
 
 class ZLoss:
     RELEVANT_ELEMENTS = torch.tensor([23, 25, 27])
-    def __init__(self, type='comp', minval=0, maxval=1, magnitude=1):
+    def __init__(self, type='comp', minval=0, maxval=1, magnitude=1, weight=1):
         self.type = type
         self.min = minval
         self.max = maxval
         self.magnitude = magnitude
+        self.weight = weight
 
     def __call__(self, z, model):
         if self.type == 'comp':
             compositions = model.fc_composition(z)
             rel_compositions = compositions[:, self.RELEVANT_ELEMENTS]
-            return torch.where(rel_compositions > self.max, rel_compositions, 0) - torch.where(rel_compositions < self.min, rel_compositions, 0)
+            return torch.where(rel_compositions > self.max, rel_compositions, 0) - torch.where(rel_compositions < self.min, rel_compositions, 0) * self.weight
+        if self.type == 'best_by_comp':
+            compositions = model.fc_composition(z)
+            rel_compositions = compositions[:, self.RELEVANT_ELEMENTS]
+            return - self.model.composition_rank(rel_compositions) * self.weight
+
+
 
 
 def filter_step_data(step_data, conditions):

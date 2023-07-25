@@ -343,6 +343,7 @@ class CDVAE(BaseModule):
         try:
             _ = torch.multinomial(atom_type_probs, num_samples=1).squeeze(1) + 1
         except:
+            # we could include this declaration
             emergency_output = {
                 'pred_composition_per_atom': pred_composition_per_atom.detach(),
                 'pred_composition_probs': pred_composition_probs,
@@ -353,7 +354,8 @@ class CDVAE(BaseModule):
                 'gem_out': (pred_num_atoms, pred_lengths_and_angles, pred_lengths, pred_angles,
          pred_composition_per_atom)}
 
-            torch.save(emergency_output, 'emergency_out.pt')
+            #torch.save(emergency_output, 'emergency_out.pt')
+            exit(123)
 
         rand_atom_types = torch.multinomial(
             atom_type_probs, num_samples=1).squeeze(1) + 1
