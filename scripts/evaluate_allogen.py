@@ -148,6 +148,7 @@ def optimization_by_batch(model, ld_kwargs, batch,
         breakpoints = []
         cbf_storage = [None]
         cbf_list = []
+        fc_comp = []
 
         def cbf_hook_fn(module, input, output):
             cbf_storage[0] = module.current_cbf
@@ -177,6 +178,7 @@ def optimization_by_batch(model, ld_kwargs, batch,
                 breakpoints.append(i)
                 z_list.append(recent_z)
                 properties_list.append(recent_property)
+                fc_comp.append(model.fc_composition(z).detach().cpu()[:, [23, 25, 27]])
 
                 cbf_list.append(cbf_storage[0])
             all_crystals.append(crystals)
@@ -184,10 +186,11 @@ def optimization_by_batch(model, ld_kwargs, batch,
         z_list = torch.stack(z_list, dim=0)
         properties_list = torch.stack(properties_list, dim=0)
         cbf_list = torch.stack(cbf_list, dim=0)
+        fc_comp = torch.stack(fc_comp, dim=0)
         # breakpoints = torch.tensor(breakpoints)
         return {k: torch.cat([d[k] for d in all_crystals]).unsqueeze(0) for k in
                 ['frac_coords', 'atom_types', 'num_atoms', 'lengths',
-                 'angles']}, z_list, properties_list, breakpoints, cbf_list
+                 'angles']}, z_list, properties_list, breakpoints, cbf_list, fc_comp
 
     return {k: torch.cat([d[k] for d in all_crystals]).unsqueeze(0) for k in
             ['frac_coords', 'atom_types', 'num_atoms', 'lengths', 'angles']}
@@ -636,13 +639,14 @@ def main(args):
         for n, batch in enumerate(initial_struct_loader):
             if n == n_batches and n_batches > 0:
                 break
-            opt_out, z, fc_properties, optimization_breakpoints, cbf = optimization_by_batch(model, ld_kwargs, batch,
+            opt_out, z, fc_properties, optimization_breakpoints, cbf, _ = optimization_by_batch(model, ld_kwargs, batch,
                                                                                              num_starting_points=100,
                                                                                              num_gradient_steps=5000,
                                                                                              lr=1e-3, num_saved_crys=3,
                                                                                              extra_returns=True,
                                                                                              maximize=True,
                                                                                              extra_breakpoints=extra_breakpoints)
+
 
             n_generated_structures = batch.num_atoms.cpu().shape[0]
             chonker = opt_chunk_generator(opt_out, n_generated_structures)
@@ -784,17 +788,19 @@ def main(args):
                            'z': [],
                            'cif': [],
                            'fc_properties': [],
+                           'fc_comp': [],
                            'cbf': []}
 
             # ------------------ Optimization step ------------------------------
             all_fc_properties = []
+            all_fc_comp = []
             starting_data = []
             for n, batch in enumerate(cur_structure_loader):
-                if n > 2:
+                if n > 1:
                     continue
-                    if step == 0:
-                        starting_data.append('take element comp and label from batch')
-                opt_out, z, fc_properties, optimization_breakpoints, cbf = optimization_by_batch(model, ld_kwargs,
+                if step == 0:
+                    starting_data.append('take element comp and label from batch')
+                opt_out, z, fc_properties, optimization_breakpoints, cbf, fc_comp = optimization_by_batch(model, ld_kwargs,
                                                                                                  batch,
                                                                                                  num_starting_points=100,
                                                                                                  num_gradient_steps=500,
@@ -813,10 +819,12 @@ def main(args):
                                 'angles': [],
                                 'z': z,
                                 'fc_properties': fc_properties,
+                                'fc_comp': fc_comp,
                                 'cif': [],
                                 'cbf': cbf}
 
                 all_fc_properties.append(fc_properties)
+                all_fc_comp.append(fc_comp)
                 for chunk, bp in zip(chonker, optimization_breakpoints):
                     step_output = {
                         'frac_coords': chunk['frac_coords'],
@@ -893,8 +901,12 @@ def main(args):
             step_fc_properties = []
             for fc in all_fc_properties:
                 step_fc_properties = step_fc_properties + fc.reshape(-1).tolist()
+            step_fc_comp = []
+            for fc in all_fc_comp:
+                step_fc_comp = step_fc_comp + fc.reshape(-1, 3).tolist()
             fc_errors = [abs(step_fc_properties[i]-prop_lmp[i]) for i in range(len(step_fc_properties))]
             step_data = {'fc_properties': step_fc_properties,
+                         'fc_comp': step_fc_comp,
                          'initial_energies': initial_energies,
                          'final_energies': final_energies,
                          'structure_names': structure_names,
