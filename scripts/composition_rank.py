@@ -6,15 +6,17 @@ from matplotlib.patches import Polygon
 import matplotlib.cm as cm
 from sklearn.neighbors import NearestNeighbors
 from typing import Union, Tuple, List, Iterable, Any
+import os
 
 class DataTriangle:
-    def __init__(self):
+    def __init__(self, eps=10e-3):
         self.triang = None
         self.interpolator = None
         self.x = None
         self.y = None
         self.values = None
         self.sqrt3 = np.sqrt(3)
+        self.eps = eps
 
     def ternary_to_cartesian(self, coordinates):
         a = coordinates[:, 0]
@@ -24,7 +26,19 @@ class DataTriangle:
         y = self.sqrt3 * 0.5 * c / (a + b + c)
         return x, y
 
+    def format_data(self, coordinates, values):
+        coordinates = np.array(coordinates).reshape(-1, 3)
+        coordinates = coordinates/coordinates.sum(axis=-1, keepdims=True)
+        values = np.array(values)
+        return coordinates, values
+
+    def format_coordinates(self, coordinates):
+        coordinates = np.array(coordinates).reshape(-1, 3)
+        coordinates = coordinates/coordinates.sum(axis=-1, keepdims=True)
+        return coordinates
+
     def triangulate_data(self, coordinates, values):
+        coordinates, values = self.format_data(coordinates, values)
         self.x, self.y = self.ternary_to_cartesian(coordinates)
         self.values = values
 
@@ -38,10 +52,18 @@ class DataTriangle:
         self.triang = Triangulation(self.x, self.y)
         self.interpolator = LinearTriInterpolator(self.triang, self.values)
 
+    def triangulate_data_dict(self, data_dict):
+        coordinates = []
+        values = []
+        for k, v in data_dict.items():
+            coordinates.append(k)
+            values.append(v)
+        self.triangulate_data(coordinates, values)
+
     def add_side_examples(self, nbrs):
-        x_edge_left = np.linspace(0, 0.5, 100)
-        x_edge_right = np.linspace(0.5, 1, 100)
-        x_edge_bottom = np.linspace(0, 1, 100)
+        x_edge_left = np.linspace(0-self.eps, 0.5, 55)
+        x_edge_right = np.linspace(0.5, 1+self.eps, 55)
+        x_edge_bottom = np.linspace(0-self.eps, 1+self.eps, 55)
 
         y_edge_bottom = np.zeros_like(x_edge_bottom)
         y_edge_left = self.sqrt3 * x_edge_left
@@ -58,7 +80,7 @@ class DataTriangle:
         self.y = np.concatenate((self.y, y_edge_bottom, y_edge_left, y_edge_right))
         self.values = np.concatenate((self.values, values_edge_bottom, values_edge_left, values_edge_right))
 
-    def show_plot(self):
+    def plot(self, savedir=None, label='', show=False):
         # Triangle border
         triangle = Polygon([[0, 0], [0.5, self.sqrt3 / 2], [1, 0]], closed=True, fill=False, edgecolor='k')
 
@@ -73,24 +95,18 @@ class DataTriangle:
         plt.ylim(0, self.sqrt3 / 2)
         cbar = plt.colorbar(im)
         cbar.set_label('Interpolated Value', rotation=270, labelpad=15)
-        plt.show()
+        if show:
+            plt.show()
+        if savedir:
+            plt.savefig(os.path.join(savedir, 'dt_plot' + label))
+
 
     def get_value(self, coordinates):
+        coordinates = self.format_coordinates(coordinates)
         x, y = self.ternary_to_cartesian(coordinates)
-        return self.interpolator(x, y)
+        out = self.interpolator(x, y)
+        return out
 
-
-np.random.seed(0)
-n_points = 100
-data = np.random.rand(n_points, 3)
-data /= np.sum(data, axis=1)[:, None]  # Normalize points to the simplex
-values = np.random.rand(n_points)  # Generate new random color values for the points
-
-dt = DataTriangle()
-dt.triangulate_data(data, values)
-dt.show_plot()
-point = np.array([[0.3, 0.4, 0.3]])
-print(dt.get_value(point))
 
 
 def ternary_to_cartesian(coordinates: np.ndarray) -> [np.ndarray, np.ndarray]:
@@ -102,9 +118,9 @@ def ternary_to_cartesian(coordinates: np.ndarray) -> [np.ndarray, np.ndarray]:
     return x, y
 
 
-def plot_transitions(before: Iterable[Iterable[int, int, int]],
-                     after: Iterable[Iterable[int, int, int]],
-                     labels: Union[None, Iterable[Iterable[str, str, str]]] = None) -> None:
+def plot_transitions(before: Iterable[Iterable[int]],
+                     after: Iterable[Iterable[int]],
+                     labels: Union[None, Iterable[Iterable[str]]] = None) -> None:
     # Check if lists are of the same length
     assert len(before) == len(after), "Before and after lists must have the same length"
 
@@ -143,3 +159,73 @@ def plot_transitions(before: Iterable[Iterable[int, int, int]],
     plt.show()
 
 
+if __name__ == '__main__':
+    np.random.seed(0)
+    n_points = 100
+    data = np.random.rand(n_points, 3)  # Normalize points to the simplex
+    values = np.random.rand(n_points)  # Generate new random color values for the points
+
+    dt = DataTriangle()
+    dt.triangulate_data(data, values)
+    #dt.plot(show=False)
+    points = np.array([[0.3, 0.4, 0.3],
+                       [0.2, 0.2, 0.2]])
+
+    print(dt.get_value(points))
+
+    before = np.array([
+                [0.48110827803611755, 0.015896467491984367, 0.5029952526092529],
+                [0.28308770060539246, 0.5825887322425842, 0.13432355225086212],
+                 [0.00040784297743812203, 0.5992700457572937, 0.4003221094608307],
+                 [0.003993670921772718, 0.32172998785972595, 0.6742762923240662],
+                 [0.5644619464874268, 0.026117807254195213, 0.4094202518463135],
+                 [0.2613866329193115, 0.002713542664423585, 0.735899806022644],
+                 [0.37652266025543213, 0.2658577859401703, 0.35761958360671997],
+                 [0.0023109056055545807, 0.603257417678833, 0.3944316506385803],
+                 [0.4177072048187256, 0.01164880022406578, 0.5706440806388855],
+                 [0.3366726040840149, 0.6625211238861084, 0.0008062669658102095],
+                 [0.33743903040885925, 0.1251264214515686, 0.5374345183372498],
+                 [0.20123137533664703, 0.5323725938796997, 0.26639607548713684],
+                 [0.11355769634246826, 0.561661422252655, 0.3247809112071991],
+                 [0.2776881754398346, 0.11074990779161453, 0.6115615367889404],
+                 [0.32861968874931335, 0.27471810579299927, 0.396662175655365],
+                 [0.10392884165048599, 0.17007102072238922, 0.7260000705718994],
+                 [0.4812844395637512, 0.23678763210773468, 0.28192776441574097],
+                 [4.2463700083317235e-05, 0.572079598903656, 0.4278779923915863],
+                 [0.09076990187168121, 0.2716616988182068, 0.6375683546066284],
+                 [0.2761760354042053, 0.6979105472564697, 0.025913426652550697],
+                 [0.24316367506980896, 0.6628663539886475, 0.09396997094154358],
+                 [0.34603065252304077, 0.6491749882698059, 0.0047944048419594765],
+                 [0.4075455963611603, 0.5024484992027283, 0.09000592678785324],
+                 [0.18214763700962067, 0.03583827614784241, 0.782014012336731],
+                 [9.937480353983119e-05, 0.3438945412635803, 0.6560060381889343],
+                 [0.600994348526001, 0.11015129834413528, 0.28885436058044434]])
+
+    after = [(24, 0, 30),
+             (13, 40, 1),
+             (0, 29, 25),
+             (0, 18, 36),
+             (28, 0, 26),
+             (9, 0, 45),
+             (20, 6, 28),
+             (0, 33, 21),
+             (20, 0, 34),
+             (19, 35, 0),
+             (16, 4, 34),
+             (9, 31, 14),
+             (5, 37, 12),
+             (12, 0, 42),
+             (14, 10, 30),
+             (1, 10, 43),
+             (25, 9, 20),
+             (0, 31, 23),
+             (2, 12, 40),
+             (10, 44, 0),
+             (9, 44, 1),
+             (19, 35, 0),
+             (20, 31, 3),
+             (6, 0, 48),
+             (0, 11, 43),
+             (31, 3, 20)]
+
+    plot_transitions(before, after, ['Cr', 'Fe', 'Ni'])

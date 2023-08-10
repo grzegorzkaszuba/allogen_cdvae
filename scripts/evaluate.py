@@ -6,9 +6,10 @@ from tqdm import tqdm
 from torch.optim import Adam
 from pathlib import Path
 from types import SimpleNamespace
-from torch_geometric.data import Batch
+from torch_geometric.data import Batch, Data
 
 from eval_utils import load_model, load_model_full
+
 
 
 def reconstructon(loader, model, ld_kwargs, num_evals,
@@ -68,7 +69,15 @@ def reconstructon(loader, model, ld_kwargs, num_evals,
             all_atom_types_stack.append(
                 torch.stack(batch_all_atom_types, dim=0))
         # Save the ground truth structure
-        #input_data_list = input_data_list + batch.to_data_list()
+
+        for n, i, j in zip(range(len(batch.ptr)-1), batch.ptr[:-1], batch.ptr[1:]):
+            input_data_list.append(Data(
+                frac_coords=batch.frac_coords[i:j],
+                atom_types=batch.atom_types[i:j],
+                lengths=batch.lengths[[n]],
+                angles=batch.angles[[n]],
+                num_atoms=batch.num_atoms[n]
+            ))
 
     frac_coords = torch.cat(frac_coords, dim=1)
     num_atoms = torch.cat(num_atoms, dim=1)
@@ -78,8 +87,7 @@ def reconstructon(loader, model, ld_kwargs, num_evals,
     if ld_kwargs.save_traj:
         all_frac_coords_stack = torch.cat(all_frac_coords_stack, dim=2)
         all_atom_types_stack = torch.cat(all_atom_types_stack, dim=2)
-    #input_data_batch = Batch.from_data_list(input_data_list)
-    input_data_batch = None
+    input_data_batch = Batch.from_data_list(input_data_list)
     return (
         frac_coords, num_atoms, atom_types, lengths, angles,
         all_frac_coords_stack, all_atom_types_stack, input_data_batch)

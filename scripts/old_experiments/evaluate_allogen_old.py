@@ -18,7 +18,6 @@ import os
 import re
 from torch.utils.tensorboard import SummaryWriter
 from pymatgen.io.cif import CifWriter
-import shutil
 
 import math
 from statistics import mean
@@ -45,7 +44,7 @@ import tempfile
 from ase.io import read
 
 from conditions import Condition, ZLoss, filter_step_data
-from mutations import Transposition, expand_dataset
+from mutations import Transposition, Transmutation
 
 
 
@@ -73,6 +72,49 @@ def merge_datasets_cryst(dataset1, dataset2):
     new_dataset.cached_data = copy.deepcopy(new_dataset.cached_data + dataset2.cached_data)
     return new_dataset
 
+
+def run_lammps_simulation(cif_str, lammps_path):
+    # Create a temporary file
+    with tempfile.NamedTemporaryFile(suffix=".cif", delete=False) as temp_cif:
+        temp_cif.write(cif_str.encode())
+
+    # Parse the CIF file with pymatgen
+    parser = CifParser(temp_cif.name)
+    structure = parser.get_structures()[0]
+
+    # Create a LAMMPS data file
+    lammps_data = LammpsData.from_structure(structure)
+    with tempfile.NamedTemporaryFile(suffix=".dat", delete=False) as temp_dat:
+        lammps_data.write_file(temp_dat.name)
+
+    # Create a LAMMPS input script
+    lammps_input = """
+    units metal
+    atom_style charge
+    boundary p p p
+    read_data {}
+    pair_style lj/cut 2.5
+    pair_coeff * * 1.0 1.0
+    neighbor 0.3 bin
+    neigh_modify delay 0 every 20 check no
+    fix 1 all nve
+    run 1000
+    """.format(temp_dat.name)
+    with tempfile.NamedTemporaryFile(suffix=".in", delete=False, mode="w") as temp_in:
+        temp_in.write(lammps_input)
+
+    # Run lammps with the input script
+    cmd = f"{lammps_path} < {temp_in.name}"
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate()
+
+    # Remove temp files
+    os.remove(temp_cif.name)
+    os.remove(temp_dat.name)
+    os.remove(temp_in.name)
+
+    # Return output and error as a dictionary
+    return {"stdout": stdout.decode(), "stderr": stderr.decode()}
 
 
 def dictionary_cat(d, dim=0):
@@ -231,14 +273,6 @@ def main(args):
         prop_model.to('cuda')
         print('prop_model_parameters', count_parameters(prop_model))
 
-    lammps_cfg = {
-        'lammps_path': '"C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"',
-        'pot_file': lammps_pot,
-        'input_template': lammps_in,
-        'pot': 'eam/alloy'}
-
-    exp_cfg = initialize_exp_cfg(['Cr', 'Fe', 'Ni'])
-
     model_path = Path(args.model_path)
 
     model, loaders, cfg = load_model_full(model_path)
@@ -256,35 +290,417 @@ def main(args):
 
     # write dummy figure to tensorboard
 
-    if 'localsearch_dataset' in args.tasks:
-        # ------------------- Dataset retrieval ---------------------
-        train = loaders[0].dataset
-        val = loaders[1].dataset
-        test = loaders[2].dataset
+    if 'enc_prop' in args.tasks:
+        print('Evaluate model on the encoding -> property prediction pipeline')
+        writer = SummaryWriter(os.path.join(writer_path, 'enc_prop'))
+        for n, dset in enumerate(['train', 'val', 'test']):
+            properties = []
+            property_labels = []
+            for batch in loaders[n]:
+                _, _, z = model.encode(batch.to(torch.device('cuda')))
+                property = model.fc_property(z).detach()
 
-        # ---------------------- Path setup -------------------------
-        path_out = os.path.join(model_path, f'localsearch_train_set_{args.label}')
-        new_dataset_path = os.path.join(path_out, 'new_data')
-        new_train_path, new_val_path, new_test_path = [os.path.join(new_dataset_path, dset) for dset in ['train', 'val', 'test']]
-        #combined_dataset_path = os.path.join(path_out, 'combined_data')
-        #combined_train_path, combined_val_path, combined_test_path = [os.path.join(combined_dataset_path, dset) for dset in ['train', 'val', 'test']]
+                properties.append(property)
+                property_labels.append(batch.y.to(torch.device('cuda')))
+            properties = torch.cat(properties, dim=0)
+            property_labels = torch.cat(property_labels, dim=0)
+            loss_pred = torch.nn.functional.mse_loss(properties, property_labels)
+            save_scatter_plot(properties.detach().cpu(), property_labels.detach().cpu(), writer,
+                              'enc_prop_' + dset + ' mse: ' + str(loss_pred))
+        writer.close()
 
-        # ------------------- Localsearch with LAMMPS ---------------
-        # localsearch params
-        n_steps = 20 # this is how many steps the algorithm will do
-        n_samples = 20 # this is how many transpositions the algorithm will check before picking the best one
-        # note: it's not necessary that the highest n_samples translates to the best result - greed doesn't always pay
+    if 'enc_dec_prop' in args.tasks:
+        print(
+            'Evaluate the combination of CDVAE and outside prediction module on the task of encoding -> decoding -> property prediction')
+        recon_data_path = os.path.join(model_path, 'eval_recon.pt')
+        recon_data = torch.load(recon_data_path)
+        recon_crystals_list = get_crystals_list(recon_data['frac_coords'][0],
+                                                recon_data['atom_types'][0],
+                                                recon_data['lengths'][0],
+                                                recon_data['angles'][0],
+                                                recon_data['num_atoms'][0])
+        predictions = prop_model_eval('perovskite', recon_crystals_list)
+        properties_dec = torch.tensor(predictions).reshape(-1, 1)
 
-        datasets = [train, val, test]
-        directories = [new_train_path, new_val_path, new_test_path]
-        dataset_names = ['train', 'val', 'test']
+        writer = SummaryWriter(os.path.join(writer_path, 'enc_dec_prop'))
+        for n, dset in enumerate(['test']):
+            properties = []
+            property_labels = []
+            for i, batch in enumerate(loaders[2]):
+                if torch.cuda.is_available():
+                    batch.cuda()
+                _, _, z = model.encode(batch)
 
-        for dataset, out_directory, dataset_name in zip(datasets, directories, dataset_names):
-            os.makedirs(out_directory, exist_ok=True)
-            expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_vector', n_steps=n_steps, n_samples=n_samples)
-            shutil.copy(os.path.join(out_directory, 'dataset.csv'), os.path.join(new_dataset_path, dataset_name+'.csv'))
+                properties.append(prop_model(batch).detach().cpu())
+                property_labels.append(batch.y.cpu())
+            properties = torch.cat(properties, dim=0)
+            property_labels = torch.cat(property_labels, dim=0)
+            # properties_dec = torch.cat(properties_dec, dim=0)
+            loss_pred = torch.nn.functional.mse_loss(properties, property_labels)
+            loss_pred_dec = torch.nn.functional.mse_loss(properties_dec, property_labels)
+            save_scatter_plot(properties.numpy(), property_labels.detach().numpy(), writer,
+                              dset + ' set gemprop mse ' + str(loss_pred.item()), plot_title='Loss from data')
+            save_scatter_plot(properties_dec.numpy(), property_labels.detach().numpy(), writer,
+                              dset + ' set recon + gemprop_mse: ' + str(loss_pred_dec.item()),
+                              plot_title='Loss from reconstructed data')
+        writer.close()
+
+    if 'enc_dec_traj' in args.tasks:
+        print(
+            'Evaluate CDVAE and outside prediction module on the task of encoding -> decoding -> property prediction on different steps of structure optimization')
+        recon_data_path = os.path.join(model_path, 'eval_recon_traj2b_20se.pt')
+        recon_data = torch.load(recon_data_path)
+        assert 'all_atom_types_stack' in recon_data, 'Error: the provided data do not contain Langevin dynamics trajectories!'
+        writer = SummaryWriter(os.path.join(writer_path, 'enc_dec_traj_20_steps_per_sigma'))
+        for step in range(recon_data['all_atom_types_stack'].shape[1]):
+            print(f'preparing crystal structures from step {step}')
+            recon_crystals_list = get_crystals_list(recon_data['all_frac_coords_stack'][0, step],
+                                                    recon_data['all_atom_types_stack'][0, step],
+                                                    recon_data['lengths'][0],
+                                                    recon_data['angles'][0],
+                                                    recon_data['num_atoms'][0])
+            predictions = prop_model_eval('perovskite', recon_crystals_list)
+            properties_dec = torch.tensor(predictions).reshape(-1, 1)
+
+            if step == 0:
+                dset = 'test'
+                properties = []
+                property_labels = []
+                for i, batch in enumerate(loaders[2]):
+                    if i >= 2:
+                        continue
+                    if torch.cuda.is_available():
+                        batch.cuda()
+                    _, _, z = model.encode(batch)
+
+                    properties.append(prop_model(batch).detach().cpu())
+                    property_labels.append(batch.y.cpu())
+                properties = torch.cat(properties, dim=0)
+                property_labels = torch.cat(property_labels, dim=0)
+                loss_pred = torch.nn.functional.mse_loss(properties, property_labels)
+                writer.add_text('Description',
+                                f'Loss trajectory on {dset} set, mse on original structures {loss_pred:.5f}')
+            loss_pred_dec = torch.nn.functional.mse_loss(properties_dec, property_labels)
+
+            writer.add_scalar('Loss trajectory', loss_pred_dec.item(), step)
+        writer.close()
+
+    if 'gnn_prop' in args.tasks:
+        print('Evaluate the accuracy of property prediction on a raw crystal structure')
+        writer = SummaryWriter(os.path.join(writer_path, 'gnn_prop'))
+        for n, dset in enumerate(['train', 'val', 'test']):
+            properties = []
+            property_labels = []
+            for batch in loaders[n]:
+                if torch.cuda.is_available():
+                    batch.cuda()
+                properties.append(prop_model(batch).detach())
+                property_labels.append(batch.y)
+            properties = torch.cat(properties, dim=0)
+            property_labels = torch.cat(property_labels, dim=0)
+            loss_pred = torch.nn.functional.mse_loss(properties, property_labels)
+            save_scatter_plot(properties.cpu().numpy(), property_labels.cpu().numpy(), writer,
+                              'gemprop_' + dset + 'mse: ' + str(loss_pred.item()),
+                              plot_title='GNN loss on original structure')
+        writer.close()
+
+    if 'get_embeddings' in args.tasks:
+        save_path = os.path.join(model_path, 'train_z')
+        print('Create the latent embeddings of the training set')
+        embeddings = []
+        for i, batch in enumerate(loaders[0]):
+            if torch.cuda.is_available():
+                batch.cuda()
+            _, _, z = model.encode(batch)
+            embeddings.append(z.detach().cpu())
+        embeddings = torch.cat(embeddings, dim=0)
+        torch.save(embeddings, save_path)
+
+    if 'retrain_val' in args.tasks:
+        # writer = SummaryWriter(os.path.join(writer_path, 'retrain'))
+        # compute losses on validation set
+        val_losses = []
+        crystals = []
+        labels = []
+        for batch in loaders[1]:
+            crystals += get_crystals_list(batch.frac_coords, batch.atom_types, batch.lengths, batch.angles,
+                                          batch.num_atoms)
+            labels.append(batch.y)
+            if torch.cuda.is_available():
+                batch.cuda()
+            prop = prop_model(batch)
+            loss = (prop - batch.y) ** 2
+            val_losses.append(loss.detach().cpu())
+        labels = torch.cat(labels, dim=0).reshape(-1, 1)
+        val_losses = torch.cat(val_losses, dim=0).reshape(-1)
+        worst_predictions = val_losses.topk(math.ceil(val_losses.shape[0] * 0.2)).indices
+        worst_mask = torch.zeros(len(crystals), dtype=torch.bool)
+        worst_mask[worst_predictions] = True
+
+        retrain_crystal_list = []
+        new_val_crystal_list = []
+        print(f'Partitioning data - the model will be retrained on {worst_predictions.shape[0]} hardest examples')
+        for i, crystal in enumerate(tqdm(crystals)):
+            crystal['y'] = labels[i]
+            if worst_mask[i]:
+                retrain_crystal_list.append(crystal)
+            else:
+                new_val_crystal_list.append(crystal)
+
+        print('Creating retraining set and new validation set from val')
+        retrain_loader = get_cryst_loader(retrain_crystal_list, cfg, prop_model.scaler)
+        new_val_loader = get_cryst_loader(new_val_crystal_list, cfg, prop_model.scaler)
+
+        trainer = pl.Trainer(
+            default_root_dir=os.path.join(writer_path, 'retraining'),
+            logger=True,
+            callbacks=None,
+            deterministic=cfg.train.deterministic,
+            check_val_every_n_epoch=cfg.logging.val_check_interval,
+            progress_bar_refresh_rate=cfg.logging.progress_bar_refresh_rate,
+            resume_from_checkpoint=None,
+            **cfg.train.pl_trainer,
+        )
+
+        trainer.fit(model=prop_model, train_dataloader=retrain_loader, val_dataloaders=loaders[0])
+        trainer.test(model=prop_model, test_dataloaders=loaders[1])
+
+    if 'bayesian_gen' in args.tasks:
+        print('Randomly generate new structures, predict their properties and assign uncertainty to those predictions')
+
+        (frac_coords, num_atoms, atom_types, lengths, angles,
+         all_frac_coords_stack, all_atom_types_stack) = generation(
+            model, ld_kwargs, args.num_batches_to_samples, args.num_evals,
+            args.batch_size, args.down_sample_traj_step)
+
+        if args.label == '':
+            gen_out_name = 'eval_gen.pt'
+        else:
+            gen_out_name = f'eval_gen_{args.label}.pt'
+
+        torch.save({
+            'eval_setting': args,
+            'frac_coords': frac_coords,
+            'num_atoms': num_atoms,
+            'atom_types': atom_types,
+            'lengths': lengths,
+            'angles': angles,
+            'all_frac_coords_stack': all_frac_coords_stack,
+            'all_atom_types_stack': all_atom_types_stack,
+            'ld_kwargs': ld_kwargs
+        }, model_path / gen_out_name)
+    '''
+    if 'bayesian_val' in args.tasks:
+        print('Predict the properties on the validation set and assign uncertainty of those predictions\n',
+              'Plot the uncertainties against the actual errors of the predictions')
+
+        train_property_labels = []
+        train_encodings = []
+        for i, batch in enumerate(loaders[0]):
+            train_property_labels.append(batch.y.numpy())
+            if torch.cuda.is_available():
+                batch.cuda()
+            _, _, z = model.encode(batch)
+            train_encodings.append(z.detach().cpu().numpy())
+        train_encodings = np.concatenate(train_encodings, axis=0)
+        train_property_labels = np.concatenate(train_property_labels, axis=0)
+        bayesian_opt = get_gaussian_regressor(train_encodings, train_property_labels)
 
 
+        property_predictions = []
+        squared_errors = []
+        z_scores_list = []
+        p_values_list = []
+        property_labels = []
+        mu_list = []
+        var_list = []
+        for i, batch in enumerate(loaders[1]):
+            property_labels.append(batch.y)
+            if torch.cuda.is_available():
+                batch.cuda()
+            properties = prop_model(batch)
+            mu, var, z = model.encode(batch)
+            mu_list.append(mu.detach().cpu())
+            var_list.append(mu.detach().cpu())
+            z_score, p_value = get_uncertainty(properties.detach().cpu().numpy(), z.detach().cpu().numpy(), bayesian_opt)
+            property_predictions.append(properties.detach().cpu())
+            z_scores_list.append(z_score)
+            p_values_list.append(p_value)
+            squared_errors.append(((properties-batch.y)**2).detach().cpu())
+        property_predictions = torch.cat(property_predictions, dim=0)
+        squared_errors = torch.cat(squared_errors, dim=0)
+        property_labels = torch.cat(property_labels, dim=0)
+        z_scores = np.concatenate(z_scores_list, axis=0)
+        p_values = np.concatenate(p_values_list, axis=0)
+
+        mu_list = torch.cat(mu_list, dim=0)
+        print('shape1', mu_list.shape)
+        var_list = torch.cat(var_list, dim=0)
+        mean_var = (mu_list.abs()/mu_list.abs().mean(dim=0, keepdim=True)).mean(dim=1, keepdim=False)
+
+        z_scores = torch.tensor(z_scores)
+        p_values = torch.tensor(p_values)
+
+        plt.scatter(mean_var, squared_errors)
+        plt.show()
+        plt.hist(mean_var.reshape(-1).numpy(), bins=20)
+        plt.show()
+        plt.hist(mean_var, bins=40)
+        plt.show()
+        plt.hist(mean_var, bins=10)
+        plt.show()
+
+        plt.scatter(p_values, squared_errors)
+        plt.show()
+
+        uncertainty_asc = torch.argsort(p_values, dim=0, descending=True).reshape(-1)
+        output = {'property_predictions': property_predictions,
+                  'property_labels': property_labels,
+                  'z_scores': z_scores,
+                  'p_values': p_values,
+                  'uncertainty_asc': uncertainty_asc,
+                  'mse': squared_errors
+        }
+
+        ordered_uncertainty_score = torch.linspace(0, 1, p_values.shape[0])
+        ordered_mse = squared_errors[uncertainty_asc]
+        plt.scatter(ordered_uncertainty_score, ordered_mse)
+        plt.show()
+    '''
+
+    if 'gen_cif' in args.tasks:
+        print('Generate structures from randomly created embeddings, create cif files and compute their properties')
+        start_time = time.time()
+
+        (frac_coords, num_atoms, atom_types, lengths, angles,
+         all_frac_coords_stack, all_atom_types_stack) = generation(
+            model, ld_kwargs, args.num_batches_to_samples, args.num_evals,
+            args.batch_size, args.down_sample_traj_step)
+
+        if args.label == '':
+            gen_out_name = 'eval_gen_cif.pt'
+        else:
+            gen_out_name = f'eval_gen_cif_{args.label}.pt'
+
+        gen_crystals_list = get_crystals_list(frac_coords[0],
+                                              atom_types[0],
+                                              lengths[0],
+                                              angles[0],
+                                              num_atoms[0])
+        retrain_loader = get_cryst_loader(gen_crystals_list, prop_cfg, prop_model.scaler, batch_size=args.batch_size)
+
+        predictions = []
+        for b in retrain_loader:
+            if torch.cuda.is_available():
+                b.cuda()
+            pred = prop_model(b)
+            properties = prop_model.scaler.inverse_transform(pred)
+            predictions.append(properties.detach().cpu())
+        predictions = torch.cat(predictions, dim=0)
+
+        torch.save({
+            'eval_setting': args,
+            'frac_coords': frac_coords,
+            'num_atoms': num_atoms,
+            'atom_types': atom_types,
+            'lengths': lengths,
+            'angles': angles,
+            'all_frac_coords_stack': all_frac_coords_stack,
+            'all_atom_types_stack': all_atom_types_stack,
+            'time': time.time() - start_time,
+            'ld_kwargs': ld_kwargs,
+            'predictions': predictions
+        }, model_path / gen_out_name)
+
+        cif_path = os.path.join(model_path, gen_out_name[:-3])
+
+        os.makedirs(cif_path, exist_ok=True)
+
+        structure_objects = tensors_to_structures(lengths[0], angles[0], frac_coords[0], atom_types[0], num_atoms[0])
+        for i, structure in enumerate(structure_objects):
+            # Write structure to CIF file
+            structure.to(filename=os.path.join(cif_path, f'generated{i}.cif'), fmt='cif')
+
+    if 'opt_cif' in args.tasks:
+        print('Run opt_cif multiple times')
+        output_dict = {'eval_setting': args,
+                       'frac_coords': [],
+                       'num_atoms': [],
+                       'atom_types': [],
+                       'lengths': [],
+                       'angles': [],
+                       'ld_kwargs': ld_kwargs,
+                       'z': [],
+                       'cif': [],
+                       'fc_properties': [],
+                       'cbf': []}
+
+        task_path = os.path.join(model_path, f'opt_cif_{args.label}')
+        os.makedirs(task_path, exist_ok=True)
+        total_generated_structures = 0
+        n_batches = 3
+        initial_struct_loader = loaders[1]
+        extra_breakpoints = []
+        for n, batch in enumerate(initial_struct_loader):
+            if n == n_batches and n_batches > 0:
+                break
+            opt_out, z, fc_properties, optimization_breakpoints, cbf, _ = optimization_by_batch(model, ld_kwargs, batch,
+                                                                                             num_starting_points=100,
+                                                                                             num_gradient_steps=5000,
+                                                                                             lr=1e-3, num_saved_crys=3,
+                                                                                             extra_returns=True,
+                                                                                             maximize=True,
+                                                                                             extra_breakpoints=extra_breakpoints)
+
+
+            n_generated_structures = batch.num_atoms.cpu().shape[0]
+            chonker = opt_chunk_generator(opt_out, n_generated_structures)
+
+            batch_output = {'frac_coords': [],
+                            'num_atoms': [],
+                            'atom_types': [],
+                            'lengths': [],
+                            'angles': [],
+                            'z': z,
+                            'fc_properties': fc_properties,
+                            'cif': [],
+                            'cbf': cbf}
+
+            for chunk, bp in zip(chonker, optimization_breakpoints):
+                step_output = {
+                    'frac_coords': chunk['frac_coords'],
+                    'num_atoms': chunk['num_atoms'],
+                    'atom_types': chunk['atom_types'],
+                    'lengths': chunk['lengths'],
+                    'angles': chunk['angles'],
+                    'cif': [],
+                }
+
+                structure_objects = tensors_to_structures(chunk['lengths'][0], chunk['angles'][0],
+                                                          chunk['frac_coords'][0],
+                                                          chunk['atom_types'][0], chunk['num_atoms'][0])
+
+                for j, structure in enumerate(structure_objects):
+                    # Write structure to CIF file
+                    structure.to(
+                        filename=os.path.join(task_path, f'generated{j + total_generated_structures}_step{bp}.cif'),
+                        fmt='cif')
+
+                    cif_writer = CifWriter(structure)
+                    cif_string = cif_writer.__str__()
+                    step_output['cif'].append(cif_string)
+
+                for k, v in step_output.items():
+                    batch_output[k].append(step_output[k])
+
+            # dictionary_cat(batch_output, dim=0)
+            for k, v in batch_output.items():
+                output_dict[k].append(batch_output[k])
+            total_generated_structures += n_generated_structures
+
+        # dictionary_cat(output_dict, dim=1)
+        output_dict['breakpoints'] = optimization_breakpoints
+        torch.save(output_dict, os.path.join(task_path, 'data.pt'))
 
 
     if 'opt_retrain' in args.tasks:
@@ -395,11 +811,11 @@ def main(args):
             cr_triangle.triangulate_data_dict(best_by_composition)
             cr_triangle.plot(savedir=path_out, label='_initial')
             new_props = get_improvement_properties(train_compositions, train_properties, cr_triangle)
-            loaders[0].dataset.relabel(new_labels=new_props, model=model)
+            #loaders[0].dataset.relabel(new_labels=new_props, model=model)
 
             model.calibrate()
             model.is_calibrating = True
-            trainer.fit(model, train_dataloader=loaders[1], val_dataloaders=loaders[2])
+            trainer.fit(model, train_dataloader=loaders[0], val_dataloaders=loaders[2])
             model.is_calibrating = False
             model, _, _ = load_model(model_path)
             # Load the best checkpoint
@@ -500,8 +916,8 @@ def main(args):
             # ------------------- LAMMPS --------------------
 
             convert_cif_to_lammps(cif_dir, lammpsdata_dir)
-            initial_energies, final_energies = lmp_energy_calculator(lammpsdata_dir, relaxed_lammpsdata_dir, lammps_cfg, silent=True)
-            elastic_vectors = lmp_elastic_calculator(lammpsdata_dir, lammps_cfg, silent=True)
+            initial_energies, final_energies = lmp_energy_calculator(lammpsdata_dir, relaxed_lammpsdata_dir, lammps_cfg)
+            elastic_vectors = lmp_elastic_calculator(lammpsdata_dir, lammps_cfg)
 
             # sort examples alphanumerically (default alphabetically)
             structure_names = [n.split('.')[0] for n in
@@ -587,7 +1003,6 @@ def main(args):
                 cr_triangle.triangulate_data_dict(best_by_composition)
                 cr_triangle.plot(savedir=path_out, label=str(step))
                 new_props = get_improvement_properties(train_compositions, train_properties, cr_triangle)
-                print('improvement_properties:', new_props)
                 loaders[0].dataset.relabel(new_labels=new_props, model=model)
 
 
@@ -607,7 +1022,7 @@ def main(args):
 
             torch.save(step_data, os.path.join(pt_dir, 'full_batch.pt'))
             torch.save(filtered_step_data, os.path.join(pt_dir, 'filtered_batch.pt'))
-            # fc_properties, initial_energies, finala_energies, stepdir, structure_names
+            # fc_properties, initial_energies, final_energies, stepdir, structure_names
 
             # --------------- New datasets --------------------
             new_dataset = AdHocCrystDataset('identity_test_dataset', cif_lmp, prop_lmp, niggli, primitive,

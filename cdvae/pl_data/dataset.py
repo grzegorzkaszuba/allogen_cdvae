@@ -4,6 +4,7 @@ import torch
 import pandas as pd
 from omegaconf import ValueNode
 from torch.utils.data import Dataset
+import numpy as np
 
 from torch_geometric.data import Data
 
@@ -11,6 +12,7 @@ from cdvae.common.utils import PROJECT_ROOT
 from cdvae.common.data_utils import (
     preprocess, preprocess_tensors, add_scaled_lattice_prop, preprocess_ad_hoc)
 
+from cdvae.common.data_utils import get_scaler_from_data_list
 
 class CrystDataset(Dataset):
     def __init__(self, name: ValueNode, path: ValueNode,
@@ -74,6 +76,33 @@ class CrystDataset(Dataset):
             y=prop.view(1, -1),
         )
         return data
+
+    def relabel(self, new_labels, reset_scaler=True, model=None):
+        for i, cd in enumerate(self.cached_data):
+            cd[self.prop] = np.float64(str(new_labels[i]))
+        if reset_scaler:
+            self.scaler = get_scaler_from_data_list(
+            self.cached_data,
+            key=self.prop)
+            if model is None:
+                raise ValueError('If you replace the scaler of the dataset, you must change the model scaler as well')
+            else:
+                model.scaler = self.scaler
+                model.reinitialize_fc_property()
+
+    def get_properties(self):
+        properties = []
+        for cd in self.cached_data:
+            properties.append(cd[self.prop])
+        return properties
+
+    def get_compositions(self, atomic_numbers):
+        compositions = []
+        for cd in self.cached_data:
+            composition = tuple(np.bincount(cd['graph_arrays'][1], minlength=29)[atomic_numbers].tolist())
+            compositions.append(composition)
+        return compositions
+
 
     def __repr__(self) -> str:
         return f"CrystDataset({self.name=}, {self.path=})"

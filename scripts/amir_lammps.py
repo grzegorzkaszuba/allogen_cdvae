@@ -295,11 +295,11 @@ def lammps_data_to_cif(structure_names, raw_path, relaxed_path, savedir=None):
     cif_strings = []
     for name in structure_names:
         # Read LAMMPS data file
-        atoms = lammpsdata.read_lammps_data(os.path.join(relaxed_path, name), style='atomic')
+        atoms = lammpsdata.read_lammps_data(os.path.join(relaxed_path, name+'.data'), style='atomic')
 
         # Manually map LAMMPS atom types to element symbols
 
-        with open(os.path.join(raw_path, name), 'r') as f:
+        with open(os.path.join(raw_path, name+'.data'), 'r') as f:
             element_symbols = extract_element_types(f)
 
         atom_types = atoms.get_array('type')

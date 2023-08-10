@@ -31,6 +31,7 @@ class BaseModule(pl.LightningModule):
         super().__init__()
         # populate self.hparams with args and kwargs automagically!
         self.save_hyperparameters()
+        self.unfrozen_state = None
 
     def configure_optimizers(self):
         opt = hydra.utils.instantiate(
@@ -47,6 +48,22 @@ class BaseModule(pl.LightningModule):
     def num_params(self):
         return sum(p.numel() for p in self.parameters())
 
+    @property
+    def num_param_fields(self) -> int:
+        return len([p for p in self.parameters()])
+
+    @property
+    def num_active_fields(self) -> int:
+        return len([p for p in self.parameters() if p.requires_grad is True])
+
+    # capture which parameters normally require grad
+    def capture_unfrozen_state(self) -> None:
+        self.unfrozen_state = [p.requires_grad for p in self.parameters()]
+
+    # override the unfreeze method to respect the parameters that don't require grad by default
+    def unfreeze(self) -> None:
+        for p, state in zip(self.parameters(), self.unfrozen_state):
+            p.requires_grad = state
 
 class CrystGNN_Supervise(BaseModule):
     """
@@ -182,6 +199,30 @@ class CDVAE(BaseModule):
         # obtain from datamodule.
         self.lattice_scaler = None
         self.scaler = None
+
+        self.unfrozen_state = None
+        self.calibration_state = None
+        self.is_calibrating = False
+        self.capture_unfrozen_state()
+
+    def reinitialize_fc_property(self):
+        if self.hparams.predict_property:
+            self.fc_property = build_mlp(self.hparams.latent_dim, self.hparams.hidden_dim,
+                                         self.hparams.fc_num_layers, 1)
+        else:
+            raise ValueError('Misconfiguration - fc_property reinitialized on model not instantiated to predict property')
+    def capture_unfrozen_state(self) -> None:
+        self.unfrozen_state = [p.requires_grad for p in self.parameters()]
+        self.freeze()
+        for p in self.fc_property.parameters():
+            p.requires_grad = True
+        self.calibration_state = [p.requires_grad for p in self.parameters()]
+        self.unfreeze()
+
+    def calibrate(self):
+        for p, state in zip(self.parameters(), self.calibration_state):
+            p.requires_grad = state
+
 
     def reparameterize(self, mu, logvar):
         """
@@ -412,6 +453,9 @@ class CDVAE(BaseModule):
             'z': z,
         }
 
+
+
+
     def generate_rand_init(self, pred_composition_per_atom, pred_lengths,
                            pred_angles, num_atoms, batch):
         rand_frac_coords = torch.rand(num_atoms.sum(), 3,
@@ -466,6 +510,7 @@ class CDVAE(BaseModule):
         return self.fc_num_atoms(z)
 
     def predict_property(self, z):
+        # GK - this one is used to produce the scaled output, not to confuse with fc_property call that omits scaling
         self.scaler.match_device(z)
         return self.scaler.inverse_transform(self.fc_property(z))
 
@@ -547,27 +592,49 @@ class CDVAE(BaseModule):
         return kld_loss
 
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
-        teacher_forcing = (
-            self.current_epoch <= self.hparams.teacher_forcing_max_epoch)
-        outputs = self(batch, teacher_forcing, training=True)
-        log_dict, loss = self.compute_stats(batch, outputs, prefix='train')
-        self.log_dict(
-            log_dict,
-            on_step=True,
-            on_epoch=True,
-            prog_bar=True,
-        )
+        if not self.is_calibrating:
+            teacher_forcing = (
+                self.current_epoch <= self.hparams.teacher_forcing_max_epoch)
+            outputs = self(batch, teacher_forcing, training=True)
+            log_dict, loss = self.compute_stats(batch, outputs, prefix='train')
+            self.log_dict(
+                log_dict,
+                on_step=True,
+                on_epoch=True,
+                prog_bar=True,
+            )
+        else:
+            mu, log_var, z = self.encode(batch)
+            # noisy_calibration
+            property_loss = self.property_loss(z, batch)  # mu might be better here
+            loss = property_loss
+            self.log_dict({'train_loss': loss},
+                          on_step=True,
+                          on_epoch=True,
+                          prog_bar=True
+                          )
         return loss
 
     def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
-        outputs = self(batch, teacher_forcing=False, training=False)
-        log_dict, loss = self.compute_stats(batch, outputs, prefix='val')
-        self.log_dict(
-            log_dict,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-        )
+        if not self.is_calibrating:
+            outputs = self(batch, teacher_forcing=False, training=False)
+            log_dict, loss = self.compute_stats(batch, outputs, prefix='val')
+            self.log_dict(
+                log_dict,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+            )
+        else:
+            mu, log_var, z = self.encode(batch)
+            # noisy_calibration
+            property_loss = self.property_loss(z, batch)  # mu might be better here
+            loss = property_loss
+            self.log_dict({'val_loss': loss},
+                          on_step=True,
+                          on_epoch=True,
+                          prog_bar=True
+                          )
         return loss
 
     def test_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
