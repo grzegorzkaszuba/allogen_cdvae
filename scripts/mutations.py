@@ -248,7 +248,7 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
     df_data = {'structure_number': datapoint_indices,
                 'cif': cifs,
         property_name: props}
-    df = pd.Dataframe(df_data)
+    df = pd.DataFrame(df_data)
     df.to_csv(os.path.join(out_directory, 'dataset.csv'), index=False)
 
 
