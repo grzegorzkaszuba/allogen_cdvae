@@ -221,7 +221,10 @@ fabric.properties
 wandb/
 
 # leave conf alone
-# conf/
+conf/
 
 # ignore models and experiments
-# hydra/
+hydra/
+
+# ignore working data
+data/
