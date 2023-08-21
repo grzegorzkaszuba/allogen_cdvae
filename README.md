@@ -1,3 +1,9 @@
+# Modified CDVAE for Allogen project
+
+The fundamentals of this project are directly adopted from CDVAE by Daniel Zügner, Tian Xie and Minkai Xu: https://github.com/txie-93/cdvae
+
+
+
 # Crystal Diffusion Variational AutoEncoder
 
 This software implementes Crystal Diffusion Variational AutoEncoder (CDVAE), which generates the periodic structure of materials.

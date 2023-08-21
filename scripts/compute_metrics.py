@@ -2,6 +2,8 @@ from collections import Counter
 import argparse
 import os
 import json
+import tempfile
+import subprocess
 
 import numpy as np
 from pathlib import Path
@@ -15,6 +17,12 @@ from pymatgen.core.lattice import Lattice
 from pymatgen.analysis.structure_matcher import StructureMatcher
 from matminer.featurizers.site.fingerprint import CrystalNNFingerprint
 from matminer.featurizers.composition.composite import ElementProperty
+from pymatgen.io.cif import CifWriter
+
+from gvect_utils import cif_to_json, modify_gvec, panna_cfg, gvector
+
+from pymatgen.core.structure import Structure
+from pymatgen.core.lattice import Lattice
 
 from eval_utils import (
     smact_validity, structure_validity, CompScaler, get_fp_pdist,
@@ -34,6 +42,61 @@ COV_Cutoffs = {
     'carbon': {'struc': 0.2, 'comp': 4.},
     'perovskite': {'struc': 0.2, 'comp': 4},
 }
+
+
+def slice_structure(struct: Structure, s: slice) -> Structure:
+    """Return a new Structure that's a subset of the original based on the provided slice."""
+
+    lattice = struct.lattice
+    species_list = [site.species for site in struct[s]]
+    coords_list = [site.coords for site in struct[s]]
+
+    return Structure(lattice, species_list, coords_list, coords_are_cartesian=True)
+
+def gvect_distance(struct1, struct2, panna_cfg):
+    atomic_numbers, counts = np.unique(struct1.atomic_numbers, return_counts=True)
+    ctrl_at, ctrl_ct = np.unique(struct2.atomic_numbers, return_counts=True)
+    assert np.all(atomic_numbers == ctrl_at) and np.all(counts == ctrl_ct),\
+        'Gvect similarity can only be used if same composition is ensured!'
+    gvects = []
+    for struct in [struct1, struct2]:
+        cif_path = panna_cfg['gvect_in_cif']
+        ex_path = panna_cfg['gvect_in']
+        save_structure_to_file(struct, cif_path)
+        cif_to_json(cif_path, ex_path)
+        out_dir = panna_cfg['gvect_out']
+        modify_gvec(panna_cfg['gvec.ini'], cif_path, ex_path.split('struct.')[0], out_dir.split('struct.')[0])
+        # create the corresponding config file
+        # genrate corresponding gvectors (files with .bin extention)
+        subprocess.call(f'{panna_cfg["python_call"]} {panna_cfg["gvect_calculator"]} --config {panna_cfg["gvec.ini"]}')
+        os.remove('gvect_already_computed.dat')
+
+        gvect_tensor = gvector(panna_cfg['gvect_out'])
+        gvects.append(gvect_tensor)
+    dis_mat = []
+    s1, s2 = gvects[0], gvects[1]
+    for i in range(len(struct2)):
+        dis_mat.append(np.linalg.norm(s1[i:i + 1] - s2, axis=1))
+    min_dis = []
+
+
+    a = np.copy(dis_mat)
+    for j in range(len(a)):
+        a[j].sort()
+        min_dis.append(a[j][0])
+
+    total_dis = np.sum(min_dis)
+    mean_dis = np.mean(min_dis)
+    norm_dis = np.norm(min_dis)
+    return total_dis
+
+def save_structure_to_file(struct: 'Structure', path: str):
+    writer = CifWriter(struct)
+    writer.write_file(path)
+
+
+
+
 
 
 class Crystal(object):
@@ -111,6 +174,26 @@ class RecEval(object):
         self.preds = pred_crys
         self.gts = gt_crys
 
+    def get_gdist(self):
+        def process_one(pred, gt, is_valid):
+            if not is_valid:
+                return None
+            try:
+                gdist = gvect_distance(pred.structure, gt.structure, panna_cfg)
+                return gdist
+            except Exception:
+                return None
+        validity = [c.valid for c in self.preds]
+
+        gdists = []
+        for i in tqdm(range(len(self.preds))):
+            gdists.append(process_one(
+                self.preds[i], self.gts[i], validity[i]))
+        gdists = np.array(gdists)
+        mean_gdist = gdists[gdists != None].mean()
+        return {'gdist': mean_gdist}
+
+
     def get_match_rate_and_rms(self):
         def process_one(pred, gt, is_valid):
             if not is_valid:
@@ -135,7 +218,7 @@ class RecEval(object):
                 'rms_dist': mean_rms_dist}
 
     def get_metrics(self):
-        return self.get_match_rate_and_rms()
+        return self.get_gdist()
 
 
 class GenEval(object):
@@ -290,6 +373,7 @@ def get_crystal_array_list(file_path, batch_idx=0):
 
 
 def main(args):
+    panna_path = ''
     all_metrics = {}
 
     cfg = load_config(args.root_path)
