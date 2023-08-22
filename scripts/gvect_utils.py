@@ -3,7 +3,9 @@ import os
 import json
 from pymatgen.io.cif import CifWriter, CifParser
 import numpy as np
-
+import subprocess
+from scipy.optimize import linear_sum_assignment
+import math
 
 panna_cfg = {
     'gvec.ini': os.path.join(os.getcwd(), 'panna_config', 'gvec.ini'),
@@ -14,6 +16,62 @@ panna_cfg = {
     'gvect_in': os.path.join(os.getcwd(), 'panna_config', 'in', 'struct.example'),
     'gvect_out': os.path.join(os.getcwd(), 'panna_config', 'out', 'struct.bin'),
 }
+
+def save_structure_to_file(struct: 'Structure', path: str):
+    writer = CifWriter(struct)
+    writer.write_file(path)
+
+
+def gvect_distance(struct1, struct2, panna_cfg, anonymous=False):
+    atomic_numbers, counts = np.unique(struct1.atomic_numbers, return_counts=True)
+    ctrl_at, ctrl_ct = np.unique(struct2.atomic_numbers, return_counts=True)
+    assert np.all(atomic_numbers == ctrl_at) and np.all(counts == ctrl_ct),\
+        'Gvect similarity can only be used if same composition is ensured!'
+    gvects = []
+    for struct in [struct1, struct2]:
+        if anonymous:
+            modified_structure = deepcopy(struct)
+
+            # Get lattice and fractional coordinates from the original structure
+            lattice = modified_structure.lattice
+            fractional_coords = [site.frac_coords for site in modified_structure]
+
+            # Reinitialize the Structure with Zn atoms while maintaining the original lattice and coordinates
+            struct = Structure(lattice, ["Zn"] * len(modified_structure), fractional_coords)
+        cif_path = panna_cfg['gvect_in_cif']
+        ex_path = panna_cfg['gvect_in']
+        save_structure_to_file(struct, cif_path)
+        cif_to_json(cif_path, ex_path)
+        out_dir = panna_cfg['gvect_out']
+        modify_gvec(panna_cfg['gvec.ini'], cif_path, ex_path.split('struct.')[0], out_dir.split('struct.')[0])
+        # create the corresponding config file
+        # genrate corresponding gvectors (files with .bin extention)
+        subprocess.call(f'{panna_cfg["python_call"]} {panna_cfg["gvect_calculator"]} --config {panna_cfg["gvec.ini"]}')
+        os.remove('gvect_already_computed.dat')
+
+        gvect_tensor = gvector(panna_cfg['gvect_out'])
+        gvects.append(gvect_tensor)
+    dis_mat = []
+    s1, s2 = gvects[0], gvects[1]
+    for i in range(len(struct2)):
+        dis_mat.append(np.linalg.norm(s1[i:i + 1] - s2, axis=1))
+    min_dis = []
+
+
+    a = np.copy(dis_mat)
+    for j in range(len(a)):
+        a[j].sort()
+        min_dis.append(a[j][0])
+
+    total_dis = np.sum(min_dis)
+    mean_dis = np.mean(min_dis)
+
+    cost_matrix = np.linalg.norm(s1[:, None, :] - s2[None, :, :], axis=2)
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    total_cost = cost_matrix[row_ind, col_ind].sum()
+    mean_dis = total_cost/len(row_ind)
+
+    return mean_dis
 
 def cif_to_json(cif_file, path):
     """
@@ -105,3 +163,83 @@ def gvector (gvector):
         gvect_tensor = np.reshape(data[1+n_atoms:1+n_atoms+gvect_size],
                     [n_atoms, g_size])
     return (gvect_tensor)
+
+
+from copy import deepcopy
+from pymatgen.core.structure import Structure
+from pymatgen.core.lattice import Lattice
+
+
+def create_zinc_supercell(target_volume, structure_type="fcc", template_atom='Zn'):
+    """
+    Returns a Zn supercell (either FCC or BCC) with 54 atoms and approximately the target volume.
+    """
+    volume_per_atom = target_volume / 54
+
+    if structure_type == "fcc":
+        # Compute the lattice constant "a" for the desired ratio
+        a = (2 * volume_per_atom / math.sqrt(2)) ** (1 / 3)
+
+        # Construct the FCC lattice
+        lattice = Lattice([[a, 0, 0], [0, a, 0], [0, 0, a * math.sqrt(2)]])
+        frac_coords = [
+            [0, 0, 0],
+            [0, .5, .5]
+        ]
+
+        #frac_coords = [
+        #    [0, 0, 0],
+        #    [0.5, 0.5, 0],
+        #    [0.5, 0, 0.5],
+        #    [0, 0.5, 0.5]
+        #]
+
+        structure = Structure(lattice, [template_atom] * 2, frac_coords)
+        structure.make_supercell([3, 3, 3])
+
+    elif structure_type == "bcc":
+        lattice_constant = (volume_per_atom * 2) ** (1 / 3)
+
+        lattice = Lattice.cubic(lattice_constant)
+        structure = Structure(lattice, [template_atom, template_atom], [[0, 0, 0], [0.5, 0.5, 0.5]])
+        structure.make_supercell([3, 3, 3])
+
+    else:
+        raise ValueError("Invalid structure_type provided. Choose either 'fcc' or 'bcc'.")
+
+    return structure
+
+
+def template_gdist(compared_structure, structure_type, panna_config, lattice_constant=None):
+    """
+    Compares a modified structure (with all atoms replaced by Zn) to a perfect Zn template
+    (either FCC or BCC) using my_similarity_function.
+    """
+
+    # If lattice_constant is provided, infer the target volume
+    if lattice_constant:
+        target_volume = lattice_constant ** 3 * (4 if structure_type == "fcc" else 2) * 54
+    else:
+        target_volume = compared_structure.volume
+
+    zinc_template = create_zinc_supercell(target_volume, structure_type)
+    # Modify the compared_structure: replace all atoms with Zn
+    modified_structure = deepcopy(compared_structure)
+
+    # Get lattice and fractional coordinates from the original structure
+    lattice = modified_structure.lattice
+    fractional_coords = [site.frac_coords for site in modified_structure]
+
+    # Reinitialize the Structure with Zn atoms while maintaining the original lattice and coordinates
+    modified_structure = Structure(lattice, ["Zn"] * len(modified_structure), fractional_coords)
+
+
+    # Compare the structures using my_similarity_function
+    result = gvect_distance(modified_structure, zinc_template, panna_config)
+
+
+
+    return result
+
+# Remember to import and integrate my_similarity_function for this to work.
+
