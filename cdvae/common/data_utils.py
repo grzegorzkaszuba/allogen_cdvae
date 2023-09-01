@@ -648,20 +648,30 @@ def get_scaler_from_data_list(data_list, key):
 
 
 def preprocess(input_file, num_workers, niggli, primitive, graph_method,
-               prop_list, preprocess_limit):
+               prop_list, preprocess_limit, crystal_phases=None):
     df = pd.read_csv(input_file)[:preprocess_limit]
-
-    def process_one(row, niggli, primitive, graph_method, prop_list):
+    # crystal phases: tuple
+    def process_one(row, niggli, primitive, graph_method, prop_list, crystal_phases):
         crystal_str = row['cif']
         crystal = build_crystal(
             crystal_str, niggli=niggli, primitive=primitive)
         graph_arrays = build_crystal_graph(crystal, graph_method)
         properties = {k: row[k] for k in prop_list if k in row.keys()}
-        result_dict = {
-            'mp_id': row['material_id'],
-            'cif': crystal_str,
-            'graph_arrays': graph_arrays,
-        }
+        if crystal_phases is None:
+            result_dict = {
+                'mp_id': row['material_id'],
+                'cif': crystal_str,
+                'graph_arrays': graph_arrays,
+                'phase': -1
+            }
+
+        else:
+            result_dict = {
+                'mp_id': row['material_id'],
+                'cif': crystal_str,
+                'graph_arrays': graph_arrays,
+                'phase': list(crystal_phases).index(row['sym'])
+            }
         result_dict.update(properties)
         return result_dict
 
@@ -672,6 +682,7 @@ def preprocess(input_file, num_workers, niggli, primitive, graph_method,
         [primitive] * len(df),
         [graph_method] * len(df),
         [prop_list] * len(df),
+        [crystal_phases] * len(df),
         num_cpus=num_workers)
 
     mpid_to_results = {result['mp_id']: result for result in unordered_results}

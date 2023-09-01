@@ -1,0 +1,2 @@
+python_call: python
+lammps_call: '"C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"'

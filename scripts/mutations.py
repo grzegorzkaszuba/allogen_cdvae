@@ -13,6 +13,7 @@ from itertools import combinations
 from pymatgen.core import Structure
 from conditions import Condition, filter_step_data
 import random
+import yaml
 
 print(os.getcwd())
 class ASEMutation:
@@ -55,8 +56,10 @@ def struct_localsearch(cif_file, output_file):
     os.makedirs(experiment_path, exist_ok=True)
     input_cif = out_file['cif_lmp'][35]
 
+    with open('subprocess_calls.yaml', 'r') as file:
+        lmp_path = yaml.safe_load(file).get('lammps_call')
     lammps_cfg = {
-        'lammps_path': '"C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"',
+        'lammps_path': lmp_path,
         'pot_file': lammps_pot,
         'input_template': lammps_in,
         'pot': 'eam/alloy'}
@@ -260,8 +263,10 @@ if __name__ == '__main__':
     os.makedirs(experiment_path, exist_ok=True)
     input_cif = out_file['cif_lmp'][35]
 
+    with open('subprocess_calls.yaml', 'r') as file:
+        lmp_path = yaml.safe_load(file).get('lammps_call')
     lammps_cfg = {
-        'lammps_path': '"C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"',
+        'lammps_path': lmp_path,
         'pot_file': lammps_pot,
         'input_template': lammps_in,
         'pot': 'eam/alloy'}

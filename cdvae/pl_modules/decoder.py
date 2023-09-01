@@ -24,6 +24,7 @@ class GemNetTDecoder(nn.Module):
         max_neighbors=20,
         radius=6.,
         scale_file=None,
+        n_phases=1
     ):
         super(GemNetTDecoder, self).__init__()
         self.cutoff = radius
@@ -39,6 +40,7 @@ class GemNetTDecoder(nn.Module):
             max_neighbors=self.max_num_neighbors,
             otf_graph=True,
             scale_file=scale_file,
+            n_phases=n_phases
         )
         self.fc_atom = nn.Linear(hidden_dim, MAX_ATOMIC_NUM)
 

@@ -6,6 +6,7 @@ import omegaconf
 import torch
 import pytorch_lightning as pl
 import torch.nn as nn
+import torch_scatter
 from torch.nn import functional as F
 from torch_scatter import scatter
 from tqdm import tqdm
@@ -16,13 +17,16 @@ from cdvae.common.data_utils import (
     frac_to_cart_coords, min_distance_sqr_pbc)
 from cdvae.pl_modules.embeddings import MAX_ATOMIC_NUM
 from cdvae.pl_modules.embeddings import KHOT_EMBEDDINGS
+from cdvae.pl_modules.conditional_sampling import atom_marginalization
 
 
-def build_mlp(in_dim, hidden_dim, fc_num_layers, out_dim):
+def build_mlp(in_dim, hidden_dim, fc_num_layers, out_dim, use_softmax=False):
     mods = [nn.Linear(in_dim, hidden_dim), nn.ReLU()]
     for i in range(fc_num_layers-1):
         mods += [nn.Linear(hidden_dim, hidden_dim), nn.ReLU()]
     mods += [nn.Linear(hidden_dim, out_dim)]
+    if use_softmax:
+        mods += [torch.nn.Softmax()]
     return nn.Sequential(*mods)
 
 
@@ -173,6 +177,21 @@ class CDVAE(BaseModule):
                                     self.hparams.fc_num_layers, 6)
         self.fc_composition = build_mlp(self.hparams.latent_dim, self.hparams.hidden_dim,
                                         self.hparams.fc_num_layers, MAX_ATOMIC_NUM)
+
+        self.n_phases = self.hparams.n_phases
+
+        if 'prior_comp' in self.hparams.keys():
+            self.prior_comp = self.hparams.prior_comp
+        else:
+            self.prior_comp = False
+        if self.hparams.n_phases > 1:
+            self.predict_phase = True
+            self.fc_phase = build_mlp(self.hparams.latent_dim, self.hparams.hidden_dim,
+                                      self.hparams.fc_num_layers, 2, use_softmax=True)
+        else:
+            self.predict_phase = False
+
+
         # for property prediction.
         if self.hparams.predict_property:
             self.fc_property = build_mlp(self.hparams.latent_dim, self.hparams.hidden_dim,
@@ -265,10 +284,13 @@ class CDVAE(BaseModule):
             lengths_and_angles, lengths, angles = (
                 self.predict_lattice(z, num_atoms))
             composition_per_atom = self.predict_composition(z, num_atoms)
+
+
         return num_atoms, lengths_and_angles, lengths, angles, composition_per_atom
 
+
     @torch.no_grad()
-    def langevin_dynamics(self, z, ld_kwargs, gt_num_atoms=None, gt_atom_types=None):
+    def langevin_dynamics(self, z, ld_kwargs, gt_num_atoms=None, gt_atom_types=None, prior_atoms=False):
         """
         decode crystral structure from latent embeddings.
         ld_kwargs: args for doing annealed langevin dynamics sampling:
@@ -295,8 +317,11 @@ class CDVAE(BaseModule):
         # obtain atom types.
         composition_per_atom = F.softmax(composition_per_atom, dim=-1)
         if gt_atom_types is None:
-            cur_atom_types = self.sample_composition(
-                composition_per_atom, num_atoms)
+            if not prior_atoms:
+                cur_atom_types = self.sample_composition(
+                    composition_per_atom, num_atoms)
+            else:
+                cur_atom_types = self.sample_composition2(composition_per_atom, num_atoms, composition_per_atom)
         else:
             cur_atom_types = gt_atom_types
 
@@ -312,8 +337,17 @@ class CDVAE(BaseModule):
             for step in range(ld_kwargs.n_step_each):
                 noise_cart = torch.randn_like(
                     cur_frac_coords) * torch.sqrt(step_size * 2)
-                pred_cart_coord_diff, pred_atom_types = self.decoder(
-                    z, cur_frac_coords, cur_atom_types, num_atoms, lengths, angles)
+                if self.n_phases > 1:
+                    phase_pred = self.fc_phase(z)
+                    phase_choice = torch.argmax(self.phase_pred, dim=-1)
+                    cur_phase_atom_types = self.phase_atom_types(cur_atom_types,
+                                                                 phase_choice.repeat_interleave(num_atoms))
+                    pred_cart_coord_diff, pred_atom_types = self.decoder(
+                        z, cur_frac_coords, cur_phase_atom_types, num_atoms, lengths, angles)
+
+                else:
+                    pred_cart_coord_diff, pred_atom_types = self.decoder(
+                        z, cur_frac_coords, cur_atom_types, num_atoms, lengths, angles)
                 cur_cart_coords = frac_to_cart_coords(
                     cur_frac_coords, lengths, angles, num_atoms)
                 pred_cart_coord_diff = pred_cart_coord_diff / sigma
@@ -322,7 +356,10 @@ class CDVAE(BaseModule):
                     cur_cart_coords, lengths, angles, num_atoms)
 
                 if gt_atom_types is None:
-                    cur_atom_types = torch.argmax(pred_atom_types, dim=1) + 1
+                    if not prior_atoms:
+                        cur_atom_types = torch.argmax(pred_atom_types, dim=1) + 1
+                    else:
+                        cur_atom_types = torch.argmax(atom_marginalization())
 
                 if ld_kwargs.save_traj:
                     all_frac_coords.append(cur_frac_coords)
@@ -411,8 +448,17 @@ class CDVAE(BaseModule):
         noisy_frac_coords = cart_to_frac_coords(
             cart_coords, pred_lengths, pred_angles, batch.num_atoms)
 
-        pred_cart_coord_diff, pred_atom_types = self.decoder(
-            z, noisy_frac_coords, rand_atom_types, batch.num_atoms, pred_lengths, pred_angles)
+        if self.n_phases == 1:
+            pred_cart_coord_diff, pred_atom_types = self.decoder(
+                z, noisy_frac_coords, rand_atom_types, batch.num_atoms, pred_lengths, pred_angles)
+        else:
+            phase_pred = self.fc_phase(z)
+            phase_choice = torch.argmax(phase_pred, dim=-1)
+            rand_phase_atom_types = self.phase_atom_types(rand_atom_types, phase_choice.repeat_interleave(batch.num_atoms))
+            pred_cart_coord_diff, pred_atom_types = self.decoder(
+                z, noisy_frac_coords, rand_phase_atom_types, batch.num_atoms, pred_lengths, pred_angles)
+
+
 
         # compute loss.
         num_atom_loss = self.num_atom_loss(pred_num_atoms, batch)
@@ -430,6 +476,11 @@ class CDVAE(BaseModule):
             property_loss = self.property_loss(z, batch)
         else:
             property_loss = 0.
+        if self.n_phases == 1:
+            phase_loss = 0.
+        else:
+            phase_loss = F.cross_entropy(phase_pred, batch.phase)
+
 
         return {
             'num_atom_loss': num_atom_loss,
@@ -451,6 +502,7 @@ class CDVAE(BaseModule):
             'rand_frac_coords': noisy_frac_coords,
             'rand_atom_types': rand_atom_types,
             'z': z,
+            'phase_loss': phase_loss
         }
 
 
@@ -467,6 +519,46 @@ class CDVAE(BaseModule):
         return rand_frac_coords, rand_atom_types
 
     def sample_composition(self, composition_prob, num_atoms):
+        """
+        Samples composition such that it exactly satisfies composition_prob
+        """
+        batch = torch.arange(
+            len(num_atoms), device=num_atoms.device).repeat_interleave(num_atoms)
+        assert composition_prob.size(0) == num_atoms.sum() == batch.size(0)
+        composition_prob = scatter(
+            composition_prob, index=batch, dim=0, reduce='mean')
+
+        all_sampled_comp = []
+
+        for comp_prob, num_atom in zip(list(composition_prob), list(num_atoms)):
+            comp_num = torch.round(comp_prob * num_atom)
+            atom_type = torch.nonzero(comp_num, as_tuple=True)[0] + 1
+            atom_num = comp_num[atom_type - 1].long()
+
+            sampled_comp = atom_type.repeat_interleave(atom_num, dim=0)
+
+            # if the rounded composition gives less atoms, sample the rest
+            if sampled_comp.size(0) < num_atom:
+                left_atom_num = num_atom - sampled_comp.size(0)
+
+                left_comp_prob = comp_prob - comp_num.float() / num_atom
+
+                left_comp_prob[left_comp_prob < 0.] = 0.
+                left_comp = torch.multinomial(
+                    left_comp_prob, num_samples=left_atom_num, replacement=True)
+                # convert to atomic number
+                left_comp = left_comp + 1
+                sampled_comp = torch.cat([sampled_comp, left_comp], dim=0)
+
+            sampled_comp = sampled_comp[torch.randperm(sampled_comp.size(0))]
+            sampled_comp = sampled_comp[:num_atom]
+            all_sampled_comp.append(sampled_comp)
+
+        all_sampled_comp = torch.cat(all_sampled_comp, dim=0)
+        assert all_sampled_comp.size(0) == num_atoms.sum()
+        return all_sampled_comp
+
+    def sample_composition2(self, composition_prob, num_atoms):
         """
         Samples composition such that it exactly satisfies composition_prob
         """
@@ -538,6 +630,11 @@ class CDVAE(BaseModule):
 
     def property_loss(self, z, batch):
         return F.mse_loss(self.fc_property(z), batch.y)
+
+
+    def phase_atom_types(self, atom_types, phase):
+        return atom_types + phase * MAX_ATOMIC_NUM
+
 
     def lattice_loss(self, pred_lengths_and_angles, batch):
         self.lattice_scaler.match_device(pred_lengths_and_angles)
@@ -653,6 +750,7 @@ class CDVAE(BaseModule):
         kld_loss = outputs['kld_loss']
         composition_loss = outputs['composition_loss']
         property_loss = outputs['property_loss']
+        phase_loss = outputs['phase_loss']
 
         loss = (
             self.hparams.cost_natom * num_atom_loss +
@@ -661,7 +759,8 @@ class CDVAE(BaseModule):
             self.hparams.cost_type * type_loss +
             self.hparams.beta * kld_loss +
             self.hparams.cost_composition * composition_loss +
-            self.hparams.cost_property * property_loss)
+            self.hparams.cost_property * property_loss +
+            self.hparams.cost_phase * phase_loss)
 
         log_dict = {
             f'{prefix}_loss': loss,
@@ -671,6 +770,7 @@ class CDVAE(BaseModule):
             f'{prefix}_type_loss': type_loss,
             f'{prefix}_kld_loss': kld_loss,
             f'{prefix}_composition_loss': composition_loss,
+            f'{prefix}_phase_loss': phase_loss
         }
 
         if prefix != 'train':
@@ -718,6 +818,7 @@ class CDVAE(BaseModule):
                 f'{prefix}_angles_mae': angles_mae,
                 f'{prefix}_volumes_mard': volumes_mard,
                 f'{prefix}_type_accuracy': type_accuracy,
+                f'{prefix}_phase_loss': phase_loss
             })
 
         return log_dict, loss

@@ -19,6 +19,7 @@ import re
 from torch.utils.tensorboard import SummaryWriter
 from pymatgen.io.cif import CifWriter
 import shutil
+import yaml
 
 import math
 from statistics import mean
@@ -231,8 +232,11 @@ def main(args):
         prop_model.to('cuda')
         print('prop_model_parameters', count_parameters(prop_model))
 
+    with open('subprocess_calls.yaml', 'r') as file:
+        lmp_path = yaml.safe_load(file).get('lammps_call')
+
     lammps_cfg = {
-        'lammps_path': '"C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"',
+        'lammps_path': lmp_path,
         'pot_file': lammps_pot,
         'input_template': lammps_in,
         'pot': 'eam/alloy'}
@@ -362,12 +366,6 @@ def main(args):
             for directory in [stepdir, cif_dir, lammpsdata_dir, relaxed_cif_dir, relaxed_lammpsdata_dir, chkdir, pt_dir]:
                 os.makedirs(directory, exist_ok=True)
 
-
-            lammps_cfg = {
-                'lammps_path': '"C:\\Users\\GrzegorzKaszuba\\AppData\Local\\LAMMPS 64-bit 15Jun2023\\Bin\\lammps-shell.exe"',
-                'pot_file': lammps_pot,
-                'input_template': lammps_in,
-                'pot': 'eam/alloy'}
 
             exp_cfg = initialize_exp_cfg(['Cr', 'Fe', 'Ni'])
 

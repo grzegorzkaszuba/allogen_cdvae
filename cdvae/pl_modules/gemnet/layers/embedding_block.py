@@ -23,16 +23,16 @@ class AtomEmbedding(torch.nn.Module):
             Atom embeddings size
     """
 
-    def __init__(self, emb_size):
+    def __init__(self, emb_size, n_phases=1):
         super().__init__()
         self.emb_size = emb_size
-
         # Atom embeddings: We go up to Bi (83).
-        self.embeddings = torch.nn.Embedding(MAX_ATOMIC_NUM, emb_size)
+        self.embeddings = torch.nn.Embedding(MAX_ATOMIC_NUM*n_phases, emb_size)
         # init by uniform distribution
         torch.nn.init.uniform_(
             self.embeddings.weight, a=-np.sqrt(3), b=np.sqrt(3)
         )
+
 
     def forward(self, Z):
         """
@@ -43,6 +43,7 @@ class AtomEmbedding(torch.nn.Module):
         """
         h = self.embeddings(Z - 1)  # -1 because Z.min()=1 (==Hydrogen)
         return h
+
 
 
 class EdgeEmbedding(torch.nn.Module):

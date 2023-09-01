@@ -6,27 +6,41 @@ import numpy as np
 import subprocess
 from scipy.optimize import linear_sum_assignment
 import math
+import yaml
+
+
+with open('subprocess_calls.yaml', 'r') as file:
+    python_call = yaml.safe_load(file).get('python_call')
 
 panna_cfg = {
     'gvec.ini': os.path.join(os.getcwd(), 'panna_config', 'gvec.ini'),
     'gvect_calculator': os.path.join(os.getcwd(), 'panna_config', 'panna', 'src', 'panna', 'gvect_calculator.py'),
     'gvect_tensor': os.path.join(os.getcwd(), 'panna_config', 'panna', 'gvect_already_computed.dat'),
-    'python_call': 'python',
+    'python_call': python_call,
     'gvect_in_cif': os.path.join(os.getcwd(), 'panna_config', 'in_cif', 'struct.cif'),
     'gvect_in': os.path.join(os.getcwd(), 'panna_config', 'in', 'struct.example'),
     'gvect_out': os.path.join(os.getcwd(), 'panna_config', 'out', 'struct.bin'),
 }
 
-def save_structure_to_file(struct: 'Structure', path: str):
-    writer = CifWriter(struct)
-    writer.write_file(path)
+def save_structure_to_file(struct: 'Structure', path: str, save_as_cartesian=False):
+    if not save_as_cartesian:
+        writer = CifWriter(struct)
+        writer.write_file(path)
+    else:
+        cartesian_coords = struct.cart_coords*struct.lattice.lengths
+        cartesian_structure = Structure(struct.lattice, struct.species, cartesian_coords,
+                                        coords_are_cartesian=True, site_properties=struct.site_properties)
 
+        # Now, write this structure with Cartesian coordinates to a CIF file.
+        writer = CifWriter(cartesian_structure)
+        writer.write_file(path)
 
 def gvect_distance(struct1, struct2, panna_cfg, anonymous=False):
     atomic_numbers, counts = np.unique(struct1.atomic_numbers, return_counts=True)
     ctrl_at, ctrl_ct = np.unique(struct2.atomic_numbers, return_counts=True)
-    assert np.all(atomic_numbers == ctrl_at) and np.all(counts == ctrl_ct),\
-        'Gvect similarity can only be used if same composition is ensured!'
+    if not anonymous:
+        assert np.all(atomic_numbers == ctrl_at) and np.all(counts == ctrl_ct),\
+            'Gvect similarity can only be used if same composition is ensured!'
     gvects = []
     for struct in [struct1, struct2]:
         if anonymous:
@@ -83,19 +97,26 @@ def cif_to_json(cif_file, path):
     cif_parser = CifParser(cif_file)
     structure = cif_parser.get_structures(primitive=False)[0]
 
+    lattice_matrix = structure.lattice.matrix
+
+    # Extract relevant information
     # Extract relevant information
     atoms_list = []
     for i, site in enumerate(structure):
         atom_id = i + 1
         atom_symbol = site.specie.symbol
         fract_x, fract_y, fract_z = site.frac_coords
-        atoms_list.append([atom_id, atom_symbol, [fract_x, fract_y, fract_z], [0, 0, 0]])  # Assume forces as [0, 0, 0]
+
+        # Convert fractional coordinates to Cartesian coordinates
+        cartesian_coords = fract_x * lattice_matrix[0] + fract_y * lattice_matrix[1] + fract_z * lattice_matrix[2]
+
+        atoms_list.append([atom_id, atom_symbol, cartesian_coords.tolist(), [0, 0, 0]])  # Assume forces as [0, 0, 0]
 
     # Create the JSON dictionary
     json_dict = {
         "atoms": atoms_list,
         "atomic_position_unit": "cartesian",
-        "lattice_vectors": structure.lattice.matrix.tolist(),
+        "lattice_vectors": lattice_matrix.tolist(),
         "energy": [0, "Ha"]
     }
 
@@ -136,7 +157,7 @@ def modify_gvec(file_path, cif_file, ex_directory=None, bin_directory=None):
         f.writelines(lines)
 
 
-def gvector (gvector):
+def gvector(gvector):
     with open(gvector, "rb") as binary_file:
         bin_version = int.from_bytes(binary_file.read(4),
                                      byteorder='little',
@@ -236,8 +257,6 @@ def template_gdist(compared_structure, structure_type, panna_config, lattice_con
 
     # Compare the structures using my_similarity_function
     result = gvect_distance(modified_structure, zinc_template, panna_config)
-
-
 
     return result
 

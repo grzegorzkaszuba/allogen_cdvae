@@ -11,6 +11,7 @@ from pathlib import Path
 from tqdm import tqdm
 from p_tqdm import p_map
 from scipy.stats import wasserstein_distance
+from collections import Counter
 
 from pymatgen.core.structure import Structure
 from pymatgen.core.composition import Composition
@@ -51,6 +52,73 @@ def slice_structure(struct: Structure, s: slice) -> Structure:
     lattice = struct.lattice
     species_list = [site.species for site in struct[s]]
     coords_list = [site.coords for site in struct[s]]
+
+
+def most_common_element_percentage(atomic_numbers) -> float:
+    # Calculate the total number of atoms.
+    total_atoms = atomic_numbers.shape[0]
+    _, counts = np.unique(atomic_numbers, return_counts=True)
+    # Find the count of the most common atomic number.
+    most_common_count = np.max(counts)
+
+    # Compute the percentage.
+    most_common_ratio = most_common_count / total_atoms
+
+    return most_common_ratio
+
+
+import os
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+
+
+def save_metrics(metric_dictionary, difficulties, path, label=None):
+    """
+    Store metrics in a given directory and plot scores against difficulty.
+
+    Parameters:
+    - metric_dictionary (dict): Dictionary with metrics as numpy ndarrays.
+    - difficulties (np.ndarray): Numpy array representing difficulty of examples.
+    - path (str): Directory path to store the plots and mean metrics.
+    - label (str, optional): Label for the model/dataset to include in plot titles.
+
+    """
+    # Create directory if it doesn't exist
+    os.makedirs(path, exist_ok=True)
+
+    # Compute means of metrics and save as a dictionary
+    mean_metrics = {key: np.mean(value) for key, value in metric_dictionary.items()}
+
+    # Save the mean metrics as a PyTorch file
+    torch.save(mean_metrics, os.path.join(path, 'mean_metrics.pt'))
+
+    # For each metric, create scatter plots of score vs difficulty
+    for metric_name, scores in metric_dictionary.items():
+        plt.figure(figsize=(10, 6))
+
+        # Plotting
+        plt.scatter(difficulties, scores, alpha=0.6)
+        plt.xlabel('Most common element content')
+        plt.ylabel(metric_name)
+
+        # Set title based on presence of label
+        if label:
+            plt.title(f"{metric_name} for {label}")
+        else:
+            plt.title(f"{metric_name}y")
+
+        plt.grid(True)
+
+        # Save the plot
+        plt.savefig(os.path.join(path, f"{metric_name}.png"))
+        plt.close()
+
+
+# Example usage:
+# metric_dict = {"accuracy": np.random.rand(100), "loss": np.random.rand(100)}
+# difficulties = np.random.rand(100)
+# store_metrics_and_plot(metric_dict, difficulties, "./results", label="Model1")
 
 
 
@@ -133,50 +201,34 @@ class RecEval(object):
     def get_gdist(self):
         def process_one(pred, gt, is_valid):
             if not is_valid:
-                return None
+                return None, None
         #try:
-            gdist = gvect_distance(pred.structure, gt.structure, panna_cfg)
+            #gdist = gvect_distance(pred.structure, gt.structure, panna_cfg)
+            gdist = None
             gdist_a = gvect_distance(pred.structure, gt.structure, panna_cfg, anonymous=True)
-            gdist_fcc = template_gdist(pred.structure, 'fcc', panna_cfg)
-            gdist_bcc = template_gdist(pred.structure, 'bcc', panna_cfg)
+            #gdist_fcc = template_gdist(pred.structure, 'fcc', panna_cfg)
+            #gdist_bcc = template_gdist(pred.structure, 'bcc', panna_cfg)
 
-            fcc_score = 1-(gdist_fcc/(gdist_bcc+gdist_fcc))
-            return gdist, gdist_a, fcc_score, gdist_fcc, gdist_bcc
+            #fcc_score = 1-(gdist_fcc/(gdist_bcc+gdist_fcc))
+            return gdist, gdist_a
         #except Exception:
         #    return None
         validity = [c.valid for c in self.preds]
-
+        self.validity = validity
         gdists = []
+        gdists_a = []
         for i in tqdm(range(len(self.preds))):
-            gdists.append(process_one(
-                self.preds[i], self.gts[i], validity[i]))
+            gdist, gdist_a = process_one(
+                self.preds[i], self.gts[i], validity[i])
+            if gdist is not None:
+                gdists.append(gdist)
+            if gdist_a is not None:
+                gdists_a.append(gdist_a)
+                print(f'\n\nmean gdist_a: {np.mean(gdists_a)} \n\n')
         gdists = np.array(gdists)
-        mean_gdist = gdists[gdists != None].mean()
-        return {'gdist': mean_gdist}
+        gdists_a = np.array(gdists_a)
+        return {'anonymous_gdist': gdists_a}
 
-
-    def get_match_rate_and_rms(self):
-        def process_one(pred, gt, is_valid):
-            if not is_valid:
-                return None
-            try:
-                rms_dist = self.matcher.get_rms_dist(
-                    pred.structure, gt.structure)
-                rms_dist = None if rms_dist is None else rms_dist[0]
-                return rms_dist
-            except Exception:
-                return None
-        validity = [c.valid for c in self.preds]
-
-        rms_dists = []
-        for i in tqdm(range(len(self.preds))):
-            rms_dists.append(process_one(
-                self.preds[i], self.gts[i], validity[i]))
-        rms_dists = np.array(rms_dists)
-        match_rate = sum(rms_dists != None) / len(self.preds)
-        mean_rms_dist = rms_dists[rms_dists != None].mean()
-        return {'match_rate': match_rate,
-                'rms_dist': mean_rms_dist}
 
     def get_metrics(self):
         return self.get_gdist()
@@ -342,15 +394,16 @@ def main(args):
 
     if 'recon' in args.tasks:
         recon_file_path = get_file_paths(args.root_path, 'recon', args.label)
-        recon_metric_out = os.path.join(recon_file_path, 'recon_metrics')
+        recon_metric_out = os.path.join(recon_file_path.split('.')[0], 'recon_metrics')
         crys_array_list, true_crystal_array_list = get_crystal_array_list(
             recon_file_path)
         pred_crys = p_map(lambda x: Crystal(x), crys_array_list)
         gt_crys = p_map(lambda x: Crystal(x), true_crystal_array_list)
-
+        mcep = np.array([most_common_element_percentage(pr.atom_types) for pr in pred_crys])
         rec_evaluator = RecEval(pred_crys, gt_crys)
         recon_metrics = rec_evaluator.get_metrics()
         all_metrics.update(recon_metrics)
+        save_metrics(recon_metrics, mcep[rec_evaluator.validity], recon_metric_out)
 
     if 'gen' in args.tasks:
         gen_file_path = get_file_paths(args.root_path, 'gen', args.label)
@@ -376,29 +429,6 @@ def main(args):
         opt_metrics = opt_evaluator.get_metrics()
         all_metrics.update(opt_metrics)
 
-    print(all_metrics)
-
-    if args.label == '':
-        metrics_out_file = 'eval_metrics.json'
-    else:
-        metrics_out_file = f'eval_metrics_{args.label}.json'
-    metrics_out_file = os.path.join(args.root_path, metrics_out_file)
-
-    # only overwrite metrics computed in the new run.
-    if Path(metrics_out_file).exists():
-        with open(metrics_out_file, 'r') as f:
-            written_metrics = json.load(f)
-            if isinstance(written_metrics, dict):
-                written_metrics.update(all_metrics)
-            else:
-                with open(metrics_out_file, 'w') as f:
-                    json.dump(all_metrics, f)
-        if isinstance(written_metrics, dict):
-            with open(metrics_out_file, 'w') as f:
-                json.dump(written_metrics, f)
-    else:
-        with open(metrics_out_file, 'w') as f:
-            json.dump(all_metrics, f)
 
 
 if __name__ == '__main__':

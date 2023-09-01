@@ -123,6 +123,7 @@ class GemNetT(torch.nn.Module):
         output_init: str = "HeOrthogonal",
         activation: str = "swish",
         scale_file: Optional[str] = None,
+        n_phases: int =  None,
     ):
         super().__init__()
         self.current_cbf = None
@@ -190,8 +191,13 @@ class GemNetT(torch.nn.Module):
         )
         ### ------------------------------------------------------------------------------------- ###
 
+        if n_phases is None:
+            self.n_phases = 1
+        else:
+            self.n_phases = n_phases
+
         # Embedding block
-        self.atom_emb = AtomEmbedding(emb_size_atom)
+        self.atom_emb = AtomEmbedding(emb_size_atom, self.n_phases)
         self.atom_latent_emb = nn.Linear(emb_size_atom + latent_dim, emb_size_atom)
         self.edge_emb = EdgeEmbedding(
             emb_size_atom, num_radial, emb_size_edge, activation=activation

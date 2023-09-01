@@ -10,6 +10,7 @@ cost_lattice: 10.
 cost_composition: 1.
 cost_edge: 10.
 cost_property: 1.
+cost_phase: 1.
 beta: 0.01
 teacher_forcing_lattice: true
 teacher_forcing_max_epoch: ${data.teacher_forcing_max_epoch}
@@ -21,6 +22,7 @@ type_sigma_begin: 5.
 type_sigma_end: 0.01
 num_noise_level: 50
 predict_property: true
+n_phases: ${data.n_phases}
 
 defaults:
   - encoder: dimenet

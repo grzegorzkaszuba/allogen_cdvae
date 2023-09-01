@@ -21,6 +21,11 @@ class CrystDataset(Dataset):
                  lattice_scale_method: ValueNode,
                  **kwargs):
 
+
+        if 'crystal_phases' in kwargs:
+            self.crystal_phases = kwargs.get('crystal_phases')
+        else:
+            self.crystal_phases = None
         if 'preprocess_limit' in kwargs:
             preprocess_limit = kwargs.get('preprocess_limit')
         else:
@@ -42,7 +47,8 @@ class CrystDataset(Dataset):
             primitive=self.primitive,
             graph_method=self.graph_method,
             prop_list=[prop],
-            preprocess_limit=preprocess_limit)
+            preprocess_limit=preprocess_limit,
+            crystal_phases=self.crystal_phases)
 
         add_scaled_lattice_prop(self.cached_data, lattice_scale_method)
         self.lattice_scaler = None
@@ -74,6 +80,7 @@ class CrystDataset(Dataset):
             num_bonds=edge_indices.shape[0],
             num_nodes=num_atoms,  # special attribute used for batching in pytorch geometric
             y=prop.view(1, -1),
+            phase=data_dict['phase']
         )
         return data
 
