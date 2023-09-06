@@ -23,7 +23,7 @@ def run_script(script_path, script_args, retries):
 
 script_args = sys.argv[1:]  # grab the args for the wrapper
 script_path = os.path.join(os.getcwd(), 'cdvae', 'run.py')
-retries = 10  # adjust this for the number of retries you want
+retries = 15  # adjust this for the number of retries you want
 
 exit_code = run_script(script_path, script_args, retries)
 print(f'Exit code: {exit_code}')
