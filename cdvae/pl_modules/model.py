@@ -187,7 +187,7 @@ class CDVAE(BaseModule):
         if self.hparams.n_phases > 1:
             self.predict_phase = True
             self.fc_phase = build_mlp(self.hparams.latent_dim, self.hparams.hidden_dim,
-                                      self.hparams.fc_num_layers, 2, use_softmax=True)
+                                      self.hparams.fc_num_layers, 2)
         else:
             self.predict_phase = False
 
@@ -328,7 +328,7 @@ class CDVAE(BaseModule):
         # init coords.
         cur_frac_coords = torch.rand((num_atoms.sum(), 3), device=z.device)
 
-        # annealed langevin dynamics.
+        # annealced langevin dynamics.
         for sigma in tqdm(self.sigmas, total=self.sigmas.size(0), disable=ld_kwargs.disable_bar):
             if sigma < ld_kwargs.min_sigma:
                 break
@@ -339,7 +339,7 @@ class CDVAE(BaseModule):
                     cur_frac_coords) * torch.sqrt(step_size * 2)
                 if self.n_phases > 1:
                     phase_pred = self.fc_phase(z)
-                    phase_choice = torch.argmax(self.phase_pred, dim=-1)
+                    phase_choice = torch.argmax(phase_pred, dim=-1)
                     cur_phase_atom_types = self.phase_atom_types(cur_atom_types,
                                                                  phase_choice.repeat_interleave(num_atoms))
                     pred_cart_coord_diff, pred_atom_types = self.decoder(

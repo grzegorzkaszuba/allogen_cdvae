@@ -92,6 +92,7 @@ def save_metrics(metric_dictionary, difficulties, path, label=None):
 
     # Save the mean metrics as a PyTorch file
     torch.save(mean_metrics, os.path.join(path, 'mean_metrics.pt'))
+    torch.save(metric_dictionary, os.path.join(path, 'metrics.pt'))
 
     # For each metric, create scatter plots of score vs difficulty
     for metric_name, scores in metric_dictionary.items():
@@ -203,8 +204,8 @@ class RecEval(object):
             if not is_valid:
                 return None, None
         #try:
-            #gdist = gvect_distance(pred.structure, gt.structure, panna_cfg)
-            gdist = None
+            gdist = gvect_distance(pred.structure, gt.structure, panna_cfg)
+            #gdist = None
             gdist_a = gvect_distance(pred.structure, gt.structure, panna_cfg, anonymous=True)
             #gdist_fcc = template_gdist(pred.structure, 'fcc', panna_cfg)
             #gdist_bcc = template_gdist(pred.structure, 'bcc', panna_cfg)
@@ -227,7 +228,8 @@ class RecEval(object):
                 print(f'\n\nmean gdist_a: {np.mean(gdists_a)} \n\n')
         gdists = np.array(gdists)
         gdists_a = np.array(gdists_a)
-        return {'anonymous_gdist': gdists_a}
+        return {'gdist': gdists,
+                'anonymous_gdist': gdists_a}
 
 
     def get_metrics(self):
