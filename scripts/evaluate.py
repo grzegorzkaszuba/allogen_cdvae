@@ -27,7 +27,7 @@ def reconstructon(loader, model, ld_kwargs, num_evals,
     input_data_list = []
 
     for idx, batch in enumerate(loader):
-        if idx > 10:
+        if idx > 1000:
             continue
         if torch.cuda.is_available():
             batch.cuda()
