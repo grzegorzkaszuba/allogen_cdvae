@@ -269,6 +269,11 @@ def main(args):
         else:
             recon_out_name = f'eval_recon_{args.label}.pt'
 
+        if 'phase' in test_loader.dataset.cached_data[0]:
+            phase = torch.tensor([cd['phase']for cd in test_loader.dataset.cached_data])
+        else:
+            phase = None
+
         torch.save({
             'eval_setting': args,
             'input_data_batch': input_data_batch,
@@ -279,9 +284,9 @@ def main(args):
             'angles': angles,
             'all_frac_coords_stack': all_frac_coords_stack,
             'all_atom_types_stack': all_atom_types_stack,
-            'time': time.time() - start_time
+            'time': time.time() - start_time,
+            'phase': phase
         }, model_path / recon_out_name)
-
     if 'gen' in args.tasks:
         print('Evaluate model on the generation task.')
         start_time = time.time()

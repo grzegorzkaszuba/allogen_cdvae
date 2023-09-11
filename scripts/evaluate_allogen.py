@@ -8,8 +8,7 @@ from torch.optim import Adam
 from pathlib import Path
 from types import SimpleNamespace
 
-from eval_utils import load_model, load_model_full, load_tensor_data, prop_model_eval, get_crystals_list, \
-    get_cryst_loader, tensors_to_structures
+from eval_utils import load_model, load_model_full, tensors_to_structures
 from visualization_utils import save_scatter_plot, cif_names_list, extract_atom_counts, plot_atom_ratios_mpltern
 from amir_lammps import lammps_pot, lammps_in, convert_cif_to_lammps, lammps_data_to_cif, lmp_energy_calculator, \
     lmp_elastic_calculator
@@ -48,6 +47,69 @@ from ase.io import read
 from conditions import Condition, ZLoss, filter_step_data
 from mutations import Transposition, expand_dataset
 
+
+def log_step_data(writer, filtered_step_data, step):
+    for i in range(len(filtered_step_data['elastic_vectors'])):
+        writer.add_scalar(f'property fc/case {filtered_step_data["index"][i]}',
+                          filtered_step_data['fc_properties'][i], step)
+        writer.add_scalar(f'property lammps/case {filtered_step_data["index"][i]}',
+                          filtered_step_data['elastic_vectors'][i], step)
+        writer.add_scalar(f'property fc-lammps error/case {filtered_step_data["index"][i]}',
+                          filtered_step_data['fc_errors'][i], step)
+        writer.add_scalar(f'final energy/case {filtered_step_data["index"][i]}',
+                          filtered_step_data['final_energies'][i], step)
+        writer.add_scalar(f'initial energy/case {filtered_step_data["index"][i]}',
+                          filtered_step_data['initial_energies'][i], step)
+
+
+    if len(filtered_step_data['fc_properties']) > 0:
+        writer.add_scalar(f'mean_property/fc', mean(filtered_step_data['fc_properties']), step)
+        writer.add_scalar(f'mean_property/lammps', mean(filtered_step_data['elastic_vectors']), step)
+        writer.add_scalar(f'mean_property/fc-lammps error (abs)', mean(filtered_step_data['fc_errors']),
+                          step)
+        writer.add_scalar(f'mean_property/final energy', mean(filtered_step_data['final_energies']), step)
+        writer.add_scalar(f'mean_property/initial energy', mean(filtered_step_data['initial_energies']), step)
+
+
+def update_best_by_composition(best_by_composition, filtered_step_data):
+    for i in range(len(filtered_step_data['elastic_vectors'])):
+        if filtered_step_data['summary_formulas'][i] in best_by_composition.keys():
+            if filtered_step_data['elastic_vectors'][i] > best_by_composition[
+                filtered_step_data['summary_formulas'][i]]:
+                best_by_composition[filtered_step_data['summary_formulas'][i]] = filtered_step_data['elastic_vectors'][
+                    i]
+        else:
+            best_by_composition[filtered_step_data['summary_formulas'][i]] = filtered_step_data['elastic_vectors'][i]
+
+def get_trainer(cfg, dirpath, epochs=50):
+    trainer_args_dict = vars(cfg.train.pl_trainer).copy()
+
+    # Remove keys starting with underscore
+    keys_to_remove = [key for key in trainer_args_dict if key.startswith('_')]
+    for key in keys_to_remove:
+        trainer_args_dict.pop(key)
+
+    # Modify the max_epochs and default_root_dir parameters
+    trainer_args_dict['max_epochs'] = epochs
+    trainer_args_dict['default_root_dir'] = dirpath
+
+    # Now, we can pass all other parameters from cfg. For example:
+    trainer_args_dict['logger'] = True
+    trainer_args_dict['callbacks'] = None
+
+    trainer_args_dict['deterministic'] = cfg.train.deterministic
+    trainer_args_dict['check_val_every_n_epoch'] = cfg.logging.val_check_interval
+    trainer_args_dict['progress_bar_refresh_rate'] = cfg.logging.progress_bar_refresh_rate
+    trainer_args_dict['resume_from_checkpoint'] = None
+    if torch.cuda.is_available():
+        trainer_args_dict['gpus'] = -1
+    # Pass the modified dict to the Trainer initialization
+    trainer = pl.Trainer(**trainer_args_dict)
+    trainer.checkpoint_callback.monitor = 'val_loss'
+    for callback in trainer.callbacks:
+        if isinstance(callback, ModelCheckpoint):
+            callback.dirpath = dirpath
+    return trainer
 
 
 def initialize_exp_cfg(atomic_symbols: List[str]) -> dict:
@@ -275,8 +337,8 @@ def main(args):
 
         # ------------------- Localsearch with LAMMPS ---------------
         # localsearch params
-        n_steps = 20 # this is how many steps the algorithm will do
-        n_samples = 20 # this is how many transpositions the algorithm will check before picking the best one
+        n_steps = 3 # this is how many steps the algorithm will do
+        n_samples = 10 # this is how many transpositions the algorithm will check before picking the best one
         # note: it's not necessary that the highest n_samples translates to the best result - greed doesn't always pay
 
         datasets = [train, val, test]
@@ -285,17 +347,13 @@ def main(args):
 
         for dataset, out_directory, dataset_name in zip(datasets, directories, dataset_names):
             os.makedirs(out_directory, exist_ok=True)
-            expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_vector', n_steps=n_steps, n_samples=n_samples)
+            expand_dataset(dataset, out_directory, lammps_cfg, property_name='ealstic_vector', n_steps=n_steps, n_samples=n_samples, n_examples=math.ceil(len(dataset)*0.1))
             shutil.copy(os.path.join(out_directory, 'dataset.csv'), os.path.join(new_dataset_path, dataset_name+'.csv'))
 
 
 
 
     if 'opt_retrain' in args.tasks:
-        timer = {'setup': 0,
-                 'optimize': 0,
-                 'retrain': 0,
-                 'lammps': 0}
         best_by_composition = {}
         path_out = os.path.join(model_path, f'retrain_{args.label}')
         writer = SummaryWriter(path_out)
@@ -318,39 +376,7 @@ def main(args):
 
         # --------------------------- trainer setup -----------------------------
         # Convert Namespace to dict
-        def get_trainer(cfg, dirpath, epochs=50):
-            trainer_args_dict = vars(cfg.train.pl_trainer).copy()
-
-            # Remove keys starting with underscore
-            keys_to_remove = [key for key in trainer_args_dict if key.startswith('_')]
-            for key in keys_to_remove:
-                trainer_args_dict.pop(key)
-
-            # Modify the max_epochs and default_root_dir parameters
-            trainer_args_dict['max_epochs'] = epochs
-            trainer_args_dict['default_root_dir'] = dirpath
-
-            # Now, we can pass all other parameters from cfg. For example:
-            trainer_args_dict['logger'] = True
-            trainer_args_dict['callbacks'] = None
-
-
-            trainer_args_dict['deterministic'] = cfg.train.deterministic
-            trainer_args_dict['check_val_every_n_epoch'] = cfg.logging.val_check_interval
-            trainer_args_dict['progress_bar_refresh_rate'] = cfg.logging.progress_bar_refresh_rate
-            trainer_args_dict['resume_from_checkpoint'] = None
-            if torch.cuda.is_available():
-                trainer_args_dict['gpus'] = -1
-            # Pass the modified dict to the Trainer initialization
-            trainer = pl.Trainer(**trainer_args_dict)
-            trainer.checkpoint_callback.monitor = 'val_loss'
-            for callback in trainer.callbacks:
-                if isinstance(callback, ModelCheckpoint):
-                    callback.dirpath = dirpath
-            return trainer
-
         trainer = get_trainer(cfg, os.path.join(path_out, 'initial_training'))
-        timer['setup'], cur_time = timer['setup'] + time.time() - start_time, time.time()
 
 
         for step in range(num_steps):
@@ -487,14 +513,12 @@ def main(args):
                 # --------------------- Batch end ----------------------
 
             torch.save(output_dict, os.path.join(pt_dir, 'data.pt'))
-            timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
 
             # ---------------------- CIF ---------------------
             cif_data = []
             for batch_cif in output_dict['cif']:
                 for cif_str in batch_cif[0]:
                     cif_data.append(cif_str)
-            timer['optimize'], cur_time = timer['optimize'] + time.time() - cur_time, time.time()
             # ------------------- LAMMPS --------------------
 
             convert_cif_to_lammps(cif_dir, lammpsdata_dir)
@@ -524,7 +548,6 @@ def main(args):
                               'cif_lmp': cif_lmp,
                               'summary_formulas': summary_formulas}
             torch.save(lammps_results, os.path.join(pt_dir, 'lammps_results.pt'))
-            timer['lammps'], cur_time = timer['lammps'] + time.time() - cur_time, time.time()
             # ------------- Step logging ----------------
             step_fc_properties = []
             for fc in all_fc_properties:
@@ -548,60 +571,36 @@ def main(args):
                           Condition('summary_formulas', 0, 0.9)]
 
             filtered_step_data = filter_step_data(step_data, conditions)
-
-            for i in range(len(filtered_step_data['elastic_vectors'])):
-                writer.add_scalar(f'property fc/case {filtered_step_data["index"][i]}',
-                                  filtered_step_data['fc_properties'][i], step)
-                writer.add_scalar(f'property lammps/case {filtered_step_data["index"][i]}',
-                                  filtered_step_data['elastic_vectors'][i], step)
-                writer.add_scalar(f'property fc-lammps error/case {filtered_step_data["index"][i]}',
-                                  filtered_step_data['fc_errors'][i], step)
-                writer.add_scalar(f'final energy/case {filtered_step_data["index"][i]}',
-                                  filtered_step_data['final_energies'][i], step)
-                writer.add_scalar(f'initial energy/case {filtered_step_data["index"][i]}',
-                                  filtered_step_data['initial_energies'][i], step)
-                if filtered_step_data['summary_formulas'][i] in best_by_composition.keys():
-                    if filtered_step_data['elastic_vectors'][i] > best_by_composition[filtered_step_data['summary_formulas'][i]]:
-                        best_by_composition[filtered_step_data['summary_formulas'][i]] = filtered_step_data['elastic_vectors'][i]
-                else:
-                    best_by_composition[filtered_step_data['summary_formulas'][i]] = filtered_step_data['elastic_vectors'][i]
-
-            if len(filtered_step_data['fc_properties']) > 0:
-                writer.add_scalar(f'mean_property/fc', mean(filtered_step_data['fc_properties']), step)
-                writer.add_scalar(f'mean_property/lammps', mean(filtered_step_data['elastic_vectors']), step)
-                writer.add_scalar(f'mean_property/fc-lammps error (abs)', mean(filtered_step_data['fc_errors']),
-                                  step)
-                writer.add_scalar(f'mean_property/final energy', mean(filtered_step_data['final_energies']), step)
-                writer.add_scalar(f'mean_property/initial energy', mean(filtered_step_data['initial_energies']), step)
-
-                plot_atom_ratios_mpltern(filtered_step_data['summary_formulas'],
-                                         property=filtered_step_data['elastic_vectors'],
-                                         save_label=os.path.join(path_out, f'tri_step {step}'))
+            log_step_data(writer, filtered_step_data, step)
+            update_best_by_composition(best_by_composition, filtered_step_data)
+            plot_atom_ratios_mpltern(filtered_step_data['summary_formulas'],
+                                     property=filtered_step_data['elastic_vectors'],
+                                     save_label=os.path.join(path_out, f'tri_step {step}'))
 
 
-                # ------------------------ Recalibration ------------------------
-                trainer = get_trainer(cfg, os.path.join(path_out, 'initial_training'))
-                cr_triangle = DataTriangle()
-                cr_triangle.triangulate_data_dict(best_by_composition)
-                cr_triangle.plot(savedir=path_out, label=str(step))
-                new_props = get_improvement_properties(train_compositions, train_properties, cr_triangle)
-                print('improvement_properties:', new_props)
-                loaders[0].dataset.relabel(new_labels=new_props, model=model)
+            # ------------------------ Recalibration ------------------------
+
+            trainer = get_trainer(cfg, os.path.join(path_out, 'initial_training'))
+            cr_triangle = DataTriangle()
+            cr_triangle.triangulate_data_dict(best_by_composition)
+            cr_triangle.plot(savedir=path_out, label=str(step))
+            new_props = get_improvement_properties(train_compositions, train_properties, cr_triangle)
+            print('improvement_properties:', new_props)
+            loaders[0].dataset.relabel(new_labels=new_props, model=model)
 
 
 
-                model.calibrate()
-                model.is_calibrating = True
-                trainer.fit(model, train_dataloader=cur_train_loader, val_dataloaders=cur_val_loader)
-                model.is_calibrating = False # todo in order to recalibrate, dataset must be reinitialized (perhaps even datamodule -> new scaler)
-                                                # todo the property module should perhaps be replaced thoroughly - completely new scaler and data distribution
+            model.calibrate()
+            model.is_calibrating = True
+            trainer.fit(model, train_dataloader=cur_train_loader, val_dataloaders=cur_val_loader)
+            model.is_calibrating = False # todo in order to recalibrate, dataset must be reinitialized (perhaps even datamodule -> new scaler)
+                                            # todo the property module should perhaps be replaced thoroughly - completely new scaler and data distribution
 
 
-                # Load the best checkpoint
-                best_model_path = trainer.checkpoint_callback.best_model_path
-                if best_model_path:
-                    model.load_state_dict(torch.load(best_model_path)['state_dict'])
-                timer['retrain'], cur_time = timer['retrain'] + time.time() - cur_time, time.time()
+            # Load the best checkpoint
+            best_model_path = trainer.checkpoint_callback.best_model_path
+            if best_model_path:
+                model.load_state_dict(torch.load(best_model_path)['state_dict'])
 
             torch.save(step_data, os.path.join(pt_dir, 'full_batch.pt'))
             torch.save(filtered_step_data, os.path.join(pt_dir, 'filtered_batch.pt'))
@@ -637,7 +636,6 @@ def main(args):
             # Load the best checkpoint
             #best_model_path = trainer.checkpoint_callback.best_model_path
            #model.load_state_dict(torch.load(best_model_path))
-            #timer['retrain'], cur_time = timer['retrain'] + time.time() - cur_time, time.time()
 
         final_comps = []
         final_props = []
@@ -647,7 +645,6 @@ def main(args):
         plot_atom_ratios_mpltern(final_comps,
                                  final_props,
                                  save_label=os.path.join(path_out, f'tri final'))
-        print(timer)
 
 
 

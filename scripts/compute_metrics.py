@@ -30,6 +30,7 @@ from eval_utils import (
     smact_validity, structure_validity, CompScaler, get_fp_pdist,
     load_config, load_data, get_crystals_list, prop_model_eval, compute_cov)
 
+import pandas as pd
 #CrystalNNFP = CrystalNNFingerprint.from_preset("ops")
 #CompFP = ElementProperty.from_preset('magpie')
 
@@ -73,7 +74,7 @@ import torch
 import matplotlib.pyplot as plt
 
 
-def save_metrics(metric_dictionary, difficulties, path, label=None):
+def save_metrics(metric_dictionary, difficulties, path, label=None, color=None):
     """
     Store metrics in a given directory and plot scores against difficulty.
 
@@ -99,7 +100,10 @@ def save_metrics(metric_dictionary, difficulties, path, label=None):
         plt.figure(figsize=(10, 6))
 
         # Plotting
-        plt.scatter(difficulties, scores, alpha=0.6)
+        if color is None:
+            plt.scatter(difficulties, scores, alpha=0.6)
+        else:
+            plt.scatter(difficulties, scores, alpha=0.6, c=color)
         plt.xlabel('Most common element content')
         plt.ylabel(metric_name)
 
@@ -200,10 +204,11 @@ class RecEval(object):
         self.gts = gt_crys
 
     def get_gdist(self):
-        def process_one(pred, gt, is_valid):
+        def process_one(pred, gt, is_valid, use_lammps):
             if not is_valid:
                 return None, None
         #try:
+
             gdist = gvect_distance(pred.structure, gt.structure, panna_cfg)
             #gdist = None
             gdist_a = gvect_distance(pred.structure, gt.structure, panna_cfg, anonymous=True)
@@ -406,6 +411,17 @@ def main(args):
         recon_metrics = rec_evaluator.get_metrics()
         all_metrics.update(recon_metrics)
         save_metrics(recon_metrics, mcep[rec_evaluator.validity], recon_metric_out)
+        df = pd.read_csv(os.path.join(cfg.data.root_path, 'test.csv'))
+
+        if 'sym' in df.columns:
+            sym = list(df['sym'])
+            for i in range(len(sym)):
+                if sym[i] == 'fcc':
+                    sym[i] = 0
+                else:
+                    sym[i] = 1
+            recon_metric_out_col = os.path.join(recon_file_path.split('.')[0], 'recon_metrics_col')
+            save_metrics(recon_metrics, mcep[rec_evaluator.validity], recon_metric_out_col, color=[sym])
 
     if 'gen' in args.tasks:
         gen_file_path = get_file_paths(args.root_path, 'gen', args.label)

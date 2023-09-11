@@ -151,26 +151,41 @@ def struct_localsearch(cif_file, output_file):
         print(f'step: {j}, best_step: {best_cif}, best_prop: {best_prop}')
 
 
-def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_vector', n_steps=20, n_samples=20):
+def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_vector', n_steps=20, n_samples=20, n_examples=100):
+    # setup
     cifs = []
     props = []
     datapoint_indices = []
-    for i, data in enumerate(dataset.cached_data):
+    result_record = {}
+    # randomly choose the points to optimize
+    processed_points = np.arange(len(dataset.cached_data))
+    rs = np.random.RandomState(42)
+    rs.shuffle(processed_points)
+    processed_indices = processed_points[:n_examples]
+    for i, ind in enumerate(processed_indices):
+        ind=0
+        patience = 0
+        data = dataset.cached_data[ind]
         print(f'i: {i}')
         cif_str = data['cif']
+        starting_prop = data['ealstic_vector']
+        best_prop = starting_prop
+        result_record[i] = {'best_cifs': [],
+                            'best_props': [],
+                            'starting_cif': cif_str,
+                            'starting_prop': starting_prop,
+                            'source_datapoints': [],
+                            'added_to_dataset': []}
 
         cif_file = StringIO(cif_str)
         atoms = read(cif_file, format="cif")
-        best_res = 0
-        best_cif = None
-
-        current_state = copy.deepcopy(atoms)
+        best_cif = cif_str
         struct_dir = os.path.join(out_directory, str(i))
         os.makedirs(struct_dir, exist_ok=True)
         for j in range(n_steps):
             print(f'j: {j}')
-            best_prop = 0
-            best_cif = None
+            best_step_cif = None
+            best_step_prop = 0
             step_dir = os.path.join(struct_dir, str(j))
             os.makedirs(step_dir, exist_ok=True)
             cif_dir = os.path.join(step_dir, 'raw_cif')
@@ -180,10 +195,6 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
             relaxed_cif_dir = os.path.join(step_dir, 'relaxed_cif')
             os.makedirs(relaxed_cif_dir, exist_ok=True)
             relaxed_lammps_dir = os.path.join(step_dir, 'relaxed_lammps')
-            step_res = {'initial_energies': [],
-                        'final_energies': [],
-                        'prop': [],
-                        'cif_lmp': []}
 
             cur_arr = np.array(atoms.numbers)
             samples = [pair for pair in combinations(range(cur_arr.shape[0]), 2) if
@@ -191,10 +202,10 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
             random.shuffle(samples)
             samples = samples[:n_samples]
 
-            for k, (i, j) in enumerate(samples):
-                print(f'k: {k}, i, j: {i, j}')
+            for k, (l, m) in enumerate(samples):
+                print(f'k: {k}, i, j: {l, m}')
                 arr = cur_arr.copy()
-                arr[i], arr[j] = arr[j], arr[i]
+                arr[l], arr[m] = arr[m], arr[l]
 
                 sampled_atoms = copy.deepcopy(atoms)
                 sampled_atoms.numbers = arr
@@ -212,7 +223,7 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
             initial_energy, final_energy = lmp_energy_calculator(lammps_dir, relaxed_lammps_dir, lammps_cfg=lammps_cfg,
                                                                  silent=True)
             elastic = lmp_elastic_calculator(lammps_dir, lammps_cfg=lammps_cfg, silent=True)
-            out_cif = lammps_data_to_cif([f'{i}' for i in range(n_samples)], lammps_dir, relaxed_lammps_dir,
+            out_cif = lammps_data_to_cif([f'{s}' for s in range(n_samples)], lammps_dir, relaxed_lammps_dir,
                                          savedir=relaxed_cif_dir)
             structure_names = [n.split('.')[0] for n in
                                sorted(os.listdir(relaxed_lammps_dir), key=lambda s: int(re.search('\d+', s).group()))]
@@ -230,30 +241,45 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
 
             filtered_step_data = filter_step_data(step_data, conditions)
             for l in range(len(filtered_step_data['elastic_vectors'])):
-                if filtered_step_data['elastic_vectors'][l] > best_prop:
-                    best_prop = filtered_step_data['elastic_vectors'][l]
-                    best_cif = filtered_step_data['index'][l]
-                    print(f'step: {j}, best_prop: {best_prop}')
+                if filtered_step_data['elastic_vectors'][l] > best_step_prop:
+                    best_step_prop = filtered_step_data['elastic_vectors'][l]
+                    best_step_cif = filtered_step_data['index'][l]
+                    print(f'step: {j}, best_step_prop: {best_step_prop}')
 
-            if best_prop > best_res:
+
+            if best_step_prop > best_prop:
                 patience = 0
-                atoms = read(os.path.join(relaxed_cif_dir, str(best_cif) + '.cif'), format="cif")
+                atoms = read(os.path.join(relaxed_cif_dir, str(best_step_cif) + '.cif'), format="cif")
+                best_cif = best_step_cif
+                best_prop = best_step_prop
+
             else:
                 patience += 1
-                if patience > 3:
+                if patience > 1000:
                     break
 
+            result_record[i]['best_cifs'].append(best_cif)
+            result_record[i]['best_props'].append(best_prop)
+        result_record[i]['source_datapoint'] = i
+        result_record[i]['added_to_dataset'] = best_prop > starting_prop
 
-        if best_cif is not None:
+        if best_prop > starting_prop:
             cifs.append(best_cif)
             props.append(best_prop)
+
             datapoint_indices.append(i)
+    steps = [s for s in range(n_steps+1)]
+    mean_prop = []
+    mean_prop.append(np.mean([result_record[k]['starting_prop'] for k in np.arange(n_examples)]))
+    for s in range(n_steps):
+        mean_prop.append(np.mean([result_record[k]['best_props'][s] for k in np.arange(n_examples)]))
+    result_record['mean_prop'] = mean_prop
     df_data = {'structure_number': datapoint_indices,
                 'cif': cifs,
         property_name: props}
     df = pd.DataFrame(df_data)
     df.to_csv(os.path.join(out_directory, 'dataset.csv'), index=False)
-
+    torch.save(result_record, os.path.join(out_directory, 'optimization_record'))
 
 
 
