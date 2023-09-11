@@ -204,7 +204,7 @@ class RecEval(object):
         self.gts = gt_crys
 
     def get_gdist(self):
-        def process_one(pred, gt, is_valid, use_lammps):
+        def process_one(pred, gt, is_valid, use_lammps=False):
             if not is_valid:
                 return None, None
         #try:
