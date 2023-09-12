@@ -425,7 +425,7 @@ def main(args):
             if 'preprocess_limit' in cfg.data.datamodule.datasets.test[0].keys():
                 sym = sym[:cfg.data.datamodule.datasets.test[0].preprocess_limit]
             recon_metric_out_col = os.path.join(recon_file_path.split('.')[0], 'recon_metrics_col')
-            save_metrics(recon_metrics, mcep[rec_evaluator.validity], recon_metric_out_col, color=sym)
+            save_metrics(recon_metrics, mcep[rec_evaluator.validity], recon_metric_out_col, colour=sym)
 
     if 'gen' in args.tasks:
         gen_file_path = get_file_paths(args.root_path, 'gen', args.label)
