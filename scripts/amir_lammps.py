@@ -12,7 +12,7 @@ import subprocess
 import os
 from pathlib import Path
 
-lammps_pot = os.path.join('lammps_config', 'potentials', 'NiFeCr.eam.alloy')
+lammps_pot = os.path.join('lammps_config', 'potentials')
 lammps_in = os.path.join('lammps_config', 'lammps_prompt_template')
 def update_lammps_data_file(lammps_file, atoms):
     # Retrieve the masses and atom types from the CIF file
@@ -126,7 +126,7 @@ def modify_file(file_path, lines_to_search, replacement_lines):
                     if replace_line[0] == line:
                         lines[i] = replace_line[1] + "\n"
     return lines
-def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False):
+def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_type='meam'):
     """minimises the structures and calculates the energy"""
     (pot, pot_file, lammps_command, lammps_inputs_dir) = (
         lammps_cfg['pot'],
@@ -134,6 +134,12 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False):
         lammps_cfg['lammps_path'],
         lammps_cfg['input_template']
     )
+
+    assert pot_type in ['meam', 'eam'], 'Wrong potential type: pot_type has to be either mean or eam'
+    if pot_type == 'meam':
+        pot = 'mean'
+    elif pot_type == 'eam':
+        pot = 'eam/alloy'
 
     initial_energies = {}
     final_energies = {}
@@ -159,10 +165,24 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False):
         with open(os.path.join(folder_path, name)) as file:
             lines = file.readlines()
             elms = lines[0]
+            if pot_type == 'meam':
+                if 'Fe' not in elms:
+                    pot_path = os.path.join(os.getcwd(), pot_file, 'NiCr')
+                elif 'Ni' not in elms:
+                    pot_path = os.path.join(os.getcwd(), pot_file, 'FeCr')
+                elif 'Cr' not in elms:
+                    pot_path = os.path.join(os.getcwd(), pot_file, 'FeNi')
+                else:
+                    pot_path = os.path.join(os.getcwd(), pot_file, 'NiFeCr')
+                pair_coeff_call = 'pair_coeff * * ' + os.path.join(pot_path, 'library.meam') + f' {elms} ' + os.path.join(pot_path, f'{pot_path}.meam') + f' {elms}'
+            else:
+                pot_path = os.path.join(os.getcwd(), pot_file, 'NiFeCr.eam.alloy')
+                pair_coeff_call = 'pair_coeff * * ' + pot_path + f' {elms}'
 
         modification_lines = [
             ('pair_style', f'pair_style {pot}'),
-            ('pair_coeff', 'pair_coeff * * ' + os.path.join(os.getcwd(), pot_file) + f' {elms}'),
+            ('pair_coeff', pair_coeff_call),
+            #('pair_coeff', 'pair_coeff * * ' + os.path.join(os.getcwd(), pot_file) + f' {elms}'),
             ("read_data", f"read_data {os.path.join(folder_path, name)}"),
             ('wd', f'write_data {os.path.join(relaxed_structures_dir, name)}')]
 
@@ -200,7 +220,7 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False):
     #return prop, df
     return initial_energies, final_energies
 
-def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False):
+def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False, pot_type='meam'):
     """minimises the structures and calculates the elastic vector"""
 
     (pot, pot_file, lammps_command, lammps_inputs_dir) = (
