@@ -60,7 +60,7 @@ def gvect_distance(struct1, struct2, panna_cfg, anonymous=False):
         modify_gvec(panna_cfg['gvec.ini'], cif_path, ex_path.split('struct.')[0], out_dir.split('struct.')[0])
         # create the corresponding config file
         # genrate corresponding gvectors (files with .bin extention)
-        subprocess.call([f'{panna_cfg["python_call"]}', f'{panna_cfg["gvect_calculator"]}', f'--config {panna_cfg["gvec.ini"]}'])
+        subprocess.call([f'{panna_cfg["python_call"]}', f'{panna_cfg["gvect_calculator"]}', '--config', f'{panna_cfg["gvec.ini"]}'])
         os.remove('gvect_already_computed.dat')
 
         gvect_tensor = gvector(panna_cfg['gvect_out'])
