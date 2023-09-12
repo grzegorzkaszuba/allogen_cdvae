@@ -74,7 +74,7 @@ import torch
 import matplotlib.pyplot as plt
 
 
-def save_metrics(metric_dictionary, difficulties, path, label=None, color=None):
+def save_metrics(metric_dictionary, difficulties, path, label=None, colour=None):
     """
     Store metrics in a given directory and plot scores against difficulty.
 
@@ -100,10 +100,12 @@ def save_metrics(metric_dictionary, difficulties, path, label=None, color=None):
         plt.figure(figsize=(10, 6))
 
         # Plotting
-        if color is None:
+        if colour is None:
             plt.scatter(difficulties, scores, alpha=0.6)
         else:
-            plt.scatter(difficulties, scores, alpha=0.6, c=color)
+            colour_map = {0: 'blue', 1: 'red'}
+            plot_colours = [colour_map[c] for c in colour]
+            plt.scatter(difficulties, scores, alpha=0.6, c=plot_colours)
         plt.xlabel('Most common element content')
         plt.ylabel(metric_name)
 
