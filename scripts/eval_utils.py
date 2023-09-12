@@ -71,6 +71,7 @@ def load_model(model_path, load_data=False, testing=True):
         )
         ckpts = list(model_path.glob('*.ckpt'))
         if len(ckpts) > 0:
+            print('Checkpoints available:', ckpts)
             ckpt_epochs = np.array(
                 [int(ckpt.parts[-1].split('-')[0].split('=')[1]) for ckpt in ckpts])
             ckpt = str(ckpts[ckpt_epochs.argsort()[-1]])
