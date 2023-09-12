@@ -178,7 +178,7 @@ class CDVAE(BaseModule):
         self.fc_composition = build_mlp(self.hparams.latent_dim, self.hparams.hidden_dim,
                                         self.hparams.fc_num_layers, MAX_ATOMIC_NUM)
 
-        self.n_phases = 1
+        self.n_phases = self.hparams.n_phases
 
         if 'prior_comp' in self.hparams.keys():
             self.prior_comp = self.hparams.prior_comp
