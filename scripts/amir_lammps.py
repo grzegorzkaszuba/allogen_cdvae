@@ -137,7 +137,7 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_
 
     assert pot_type in ['meam', 'eam'], 'Wrong potential type: pot_type has to be either mean or eam'
     if pot_type == 'meam':
-        pot = 'mean'
+        pot = 'meam'
     elif pot_type == 'eam':
         pot = 'eam/alloy'
 
@@ -167,14 +167,18 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_
             elms = lines[0]
             if pot_type == 'meam':
                 if 'Fe' not in elms:
-                    pot_path = os.path.join(os.getcwd(), pot_file, 'NiCr')
+                    elm_name = 'NiCr'
                 elif 'Ni' not in elms:
-                    pot_path = os.path.join(os.getcwd(), pot_file, 'FeCr')
+                    elm_name = 'FeCr'
                 elif 'Cr' not in elms:
-                    pot_path = os.path.join(os.getcwd(), pot_file, 'FeNi')
+                    elm_name = 'NiFe'
                 else:
-                    pot_path = os.path.join(os.getcwd(), pot_file, 'NiFeCr')
-                pair_coeff_call = 'pair_coeff * * ' + os.path.join(pot_path, 'library.meam') + f' {elms} ' + os.path.join(pot_path, f'{pot_path}.meam') + f' {elms}'
+                    elm_name = 'NiCrFe'
+                pot_path = os.path.join(os.getcwd(), pot_file, elm_name)
+                pot_fname = elm_name + '.meam'
+                pair_coeff_call = 'pair_coeff * * ' + os.path.join(pot_path,
+                                                                   'library.meam') + f' {elms.strip()} ' + os.path.join(
+                    pot_path, pot_fname) + f' {elms}'
             else:
                 pot_path = os.path.join(os.getcwd(), pot_file, 'NiFeCr.eam.alloy')
                 pair_coeff_call = 'pair_coeff * * ' + pot_path + f' {elms}'
@@ -230,6 +234,12 @@ def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False, pot_type='meam'
         lammps_cfg['input_template']
     )
 
+    assert pot_type in ['meam', 'eam'], 'Wrong potential type: pot_type has to be either mean or eam'
+    if pot_type == 'meam':
+        pot = 'meam'
+    elif pot_type == 'eam':
+        pot = 'eam/alloy'
+
     elastic_vectors = {}
     # Defining the paths for our directories
     folder_path = source_dir # todo this could be relaxed-structures
@@ -252,10 +262,27 @@ def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False, pot_type='meam'
             lines = file.readlines()
             elms = lines[0]
 
+        if pot_type == 'meam':
+            if 'Fe' not in elms:
+                elm_name = 'NiCr'
+            elif 'Ni' not in elms:
+                elm_name = 'FeCr'
+            elif 'Cr' not in elms:
+                elm_name = 'NiFe'
+            else:
+                elm_name = 'NiCrFe'
+            pot_path = os.path.join(os.getcwd(), pot_file, elm_name)
+            pot_fname = elm_name+'.meam'
+            pair_coeff_call = 'pair_coeff * * ' + os.path.join(pot_path, 'library.meam') + f' {elms.strip()} ' + os.path.join(pot_path, pot_fname) + f' {elms}'
+        else:
+            pot_path = os.path.join(os.getcwd(), pot_file, 'NiFeCr.eam.alloy')
+            pair_coeff_call = 'pair_coeff * * ' + pot_path + f' {elms}'
+
         modification_init = [("read_data", f"read_data {os.path.join(folder_path, name)}")]
         modification_pot = [
             ('pair_style', f'pair_style {pot}'),
-            ('pair_coeff', 'pair_coeff * * ' + os.path.join(os.getcwd(), pot_file) + f' {elms}')
+            ('pair_coeff', pair_coeff_call),
+            #('pair_coeff', 'pair_coeff * * ' + os.path.join(os.getcwd(), pot_file) + f' {elms}')
         ]
 
         # modify the files

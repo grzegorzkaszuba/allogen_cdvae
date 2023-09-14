@@ -118,8 +118,8 @@ def struct_localsearch(cif_file, output_file):
 
             lammpsdata = convert_cif_to_lammps(cif_dir, lammps_dir)
             initial_energy, final_energy = lmp_energy_calculator(lammps_dir, relaxed_lammps_dir, lammps_cfg=lammps_cfg,
-                                                                 silent=True)
-            elastic = lmp_elastic_calculator(lammps_dir, lammps_cfg=lammps_cfg, silent=True)
+                                                                 silent=False)
+            elastic = lmp_elastic_calculator(lammps_dir, lammps_cfg=lammps_cfg, silent=False)
             out_cif = lammps_data_to_cif([f'{i}.data' for i in range(n_samples)], lammps_dir, relaxed_lammps_dir,
                                          savedir=relaxed_cif_dir)
             structure_names = [n.split('.')[0] for n in
@@ -161,7 +161,7 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
     result_record = {}
     # randomly choose the points to optimize
     processed_points = np.arange(len(dataset.cached_data))
-    rs = np.random.RandomState(42)
+    rs = np.random.RandomState(41)
     rs.shuffle(processed_points)
     processed_indices = processed_points[:n_examples]
     for i, ind in enumerate(processed_indices):
@@ -174,9 +174,9 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
                          'pretty_formula': data['mp_id'].split('_')[0],
                          'cif': data['cif']}
 
-        print(f'index: {ind}, i: {i}')
+        print(f'index: {ind}, i: {i}, phase: {new_datapoint["sym"]}')
         cif_str = data['cif']
-        starting_prop = data['ealstic_vector']/100
+        starting_prop = data['ealstic_vector']
         best_prop = starting_prop
         result_record[i] = {'best_cifs': [],
                             'best_props': [],
@@ -191,7 +191,7 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
         struct_dir = os.path.join(out_directory, str(i))
         os.makedirs(struct_dir, exist_ok=True)
         for j in range(n_steps):
-            print(f'step: {j}')
+            print(f'step: {j}, starting:prop: {starting_prop}')
             best_step_cif = best_cif
             best_step_prop = 0
             step_dir = os.path.join(struct_dir, str(j))
@@ -213,7 +213,7 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
             for k, (l, m) in enumerate(samples):
                 print(f'k: {k}, i, j: {l, m}')
                 arr = cur_arr.copy()
-                arr[l], arr[m] = arr[m], arr[l]
+                #arr[l], arr[m] = arr[m], arr[l]
 
                 sampled_atoms = copy.deepcopy(atoms)
                 sampled_atoms.numbers = arr
