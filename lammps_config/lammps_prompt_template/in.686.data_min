@@ -1,0 +1,34 @@
+# Amirhossein.NaghdiDorabati@ideas-ncbr.pl
+# LAMMPS input script for energy minimization with CG
+
+# Initialize
+units           metal
+dimension       3
+boundary        p p p
+
+# Atom definition
+atom_style      atomic
+read_data C:\Users\GrzegorzKaszuba\PycharmProjects\cdvae-main\hydra\singlerun\2023-07-15\cdvae_new_elastic\localsearch_train_set_a\new_data\train\0\0\raw_lammps\686.data
+
+
+# Settings
+neighbor        2.0 bin
+neigh_modify    every 1 delay 0 check yes
+
+# Interatomic potential
+pair_style eam/alloy
+pair_coeff * * C:\Users\GrzegorzKaszuba\PycharmProjects\cdvae-main\lammps_config\potentials\NiFeCr.eam.alloy Cr Fe Ni 
+
+
+# Minimization
+reset_timestep  0
+thermo          10
+fix 1 all box/relax iso 0.0 vmax 0.001
+min_style       cg
+minimize        1e-6 1e-8 5000 10000
+
+# Output
+write_data C:\Users\GrzegorzKaszuba\PycharmProjects\cdvae-main\hydra\singlerun\2023-07-15\cdvae_new_elastic\localsearch_train_set_a\new_data\train\0\0\relaxed_lammps\686.data
+
+
+quit
