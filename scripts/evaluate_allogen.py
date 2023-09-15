@@ -321,7 +321,7 @@ def main(args):
 
     if 'localsearch_dataset' in args.tasks:
         # ------------------- Dataset retrieval ---------------------
-        loaders, cfg = load_model_full(model_path)
+        loaders, cfg = load_model_data(model_path)
         train = loaders[0].dataset
         val = loaders[1].dataset
         test = loaders[2].dataset
