@@ -408,8 +408,6 @@ def main(args):
         recon_metric_out = os.path.join(metrics_path, 'recon_metrics')
         crys_array_list, true_crystal_array_list = get_crystal_array_list(
             recon_file_path)
-        crys_array_list = crys_array_list[:5]
-        true_crystal_array_list = true_crystal_array_list[:5]
         pred_crys = p_map(lambda x: Crystal(x), crys_array_list)
         gt_crys = p_map(lambda x: Crystal(x), true_crystal_array_list)
         mcep = np.array([most_common_element_percentage(pr.atom_types) for pr in pred_crys])
@@ -428,7 +426,7 @@ def main(args):
                     sym[i] = 1
             if 'preprocess_limit' in cfg.data.datamodule.datasets.test[0].keys():
                 sym = sym[:cfg.data.datamodule.datasets.test[0].preprocess_limit]
-            recon_metric_out_col = os.path.join(recon_file_path.split('.')[0], 'recon_metrics_col')
+            recon_metric_out_col = os.path.join(metrics_path, 'recon_metrics_col')
             save_metrics(recon_metrics, mcep[rec_evaluator.validity], recon_metric_out_col, colour=sym)
 
     if 'gen' in args.tasks:
