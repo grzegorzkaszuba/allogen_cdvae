@@ -3,7 +3,7 @@
 
 
 class StructureOptimizer:
-    def __init__(self, cfg, path_out, num_steps=10, elements=('Cr', 'Fe', 'Ni')):
+    def __init__(self, cfg, path_out, loaders, num_steps=10, elements=('Cr', 'Fe', 'Ni')):
         self.cfg = cfg
         self.best_by_composition = {}
         self.path_out = path_out
@@ -13,6 +13,12 @@ class StructureOptimizer:
 
         self.n_structures_retrain = 0
         self.current_step = 0
+
+        self.cur_train_loader = copy.deepcopy(loaders[0])
+        self.cur_val_loader = copy.deepcopy(loaders[1])
+        self.cur_structure_loader = copy.deepcopy(loaders[2])
+        os.makedirs(path_out, exist_ok=True)
+
 
     def step(self):
         # Cycle Setup

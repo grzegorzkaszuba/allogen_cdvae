@@ -8,7 +8,7 @@ from torch.optim import Adam
 from pathlib import Path
 from types import SimpleNamespace
 
-from eval_utils import load_model, load_model_full, tensors_to_structures
+from eval_utils import load_model, load_model_full, tensors_to_structures, load_model_data
 from visualization_utils import save_scatter_plot, cif_names_list, extract_atom_counts, plot_atom_ratios_mpltern
 from amir_lammps import lammps_pot, lammps_in, convert_cif_to_lammps, lammps_data_to_cif, lmp_energy_calculator, \
     lmp_elastic_calculator
@@ -307,16 +307,13 @@ def main(args):
 
     model_path = Path(args.model_path)
 
-    model, loaders, cfg = load_model_full(model_path)
-    model.to('cuda')
+
     ld_kwargs = SimpleNamespace(n_step_each=args.n_step_each,
                                 step_lr=args.step_lr,
                                 min_sigma=args.min_sigma,
                                 save_traj=args.save_traj,
                                 disable_bar=args.disable_bar)
 
-    if torch.cuda.is_available():
-        model.to('cuda')
 
     writer_path = os.path.join(model_path, 'logs')
 
@@ -324,6 +321,7 @@ def main(args):
 
     if 'localsearch_dataset' in args.tasks:
         # ------------------- Dataset retrieval ---------------------
+        loaders, cfg = load_model_full(model_path)
         train = loaders[0].dataset
         val = loaders[1].dataset
         test = loaders[2].dataset
@@ -354,6 +352,8 @@ def main(args):
 
 
     if 'opt_retrain' in args.tasks:
+        model, loaders, cfg = load_model_full(model_path)
+        model.to('cuda')
         best_by_composition = {}
         path_out = os.path.join(model_path, f'retrain_{args.label}')
         writer = SummaryWriter(path_out)

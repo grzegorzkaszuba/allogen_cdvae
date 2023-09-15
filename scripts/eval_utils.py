@@ -125,6 +125,24 @@ def load_model_full(model_path):
     return model, [train_loader, val_loader, test_loader], cfg
 
 
+def load_model_data(model_path):
+    with initialize_config_dir(str(model_path)):
+        cfg = compose(config_name='hparams')
+
+        datamodule = hydra.utils.instantiate(
+            cfg.data.datamodule, _recursive_=False, scaler_path=model_path
+        )
+        datamodule.setup()
+        train_loader = datamodule.train_dataloader()
+        val_loader = datamodule.val_dataloader()[0]
+        test_loader = datamodule.test_dataloader()[0]
+
+    return [train_loader, val_loader, test_loader], cfg
+
+
+
+
+
 def load_tensor_data(model_path, data_name = 'eval_recon.pt'):
     with initialize_config_dir(str(model_path)):
         cfg = compose(config_name='hparams')
