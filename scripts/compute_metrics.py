@@ -361,10 +361,11 @@ class OptEval(object):
 
 
 def get_file_paths(root_path, task, label='', suffix='pt'):
-    if args.label == '':
-        out_name = f'eval_{task}.{suffix}'
+    actual_suffix = '.'+suffix if suffix else ''
+    if label == '':
+        out_name = f'eval_{task}{actual_suffix}'
     else:
-        out_name = f'eval_{task}_{label}.{suffix}'
+        out_name = f'eval_{task}_{label}{actual_suffix}'
     out_name = os.path.join(root_path, out_name)
     return out_name
 
@@ -402,10 +403,13 @@ def main(args):
     eval_model_name = cfg.data.eval_model_name
 
     if 'recon' in args.tasks:
-        recon_file_path = get_file_paths(args.root_path, 'recon', args.label)
-        recon_metric_out = os.path.join(recon_file_path.split('.')[0], 'recon_metrics')
+        recon_file_path = get_file_paths(args.root_path, 'recon', args.label, 'pt')
+        metrics_path = get_file_paths(args.root_path, 'recon', args.label, '')
+        recon_metric_out = os.path.join(metrics_path, 'recon_metrics')
         crys_array_list, true_crystal_array_list = get_crystal_array_list(
             recon_file_path)
+        crys_array_list = crys_array_list[:5]
+        true_crystal_array_list = true_crystal_array_list[:5]
         pred_crys = p_map(lambda x: Crystal(x), crys_array_list)
         gt_crys = p_map(lambda x: Crystal(x), true_crystal_array_list)
         mcep = np.array([most_common_element_percentage(pr.atom_types) for pr in pred_crys])
