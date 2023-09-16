@@ -168,17 +168,19 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_
             if pot_type == 'meam':
                 if 'Fe' not in elms:
                     elm_name = 'NiCr'
+                    elm_extraction = 'Ni Cr'
                 elif 'Ni' not in elms:
                     elm_name = 'FeCr'
+                    elm_extraction = 'Fe Cr'
                 elif 'Cr' not in elms:
                     elm_name = 'NiFe'
+                    elm_extraction = 'Ni Fe'
                 else:
                     elm_name = 'NiCrFe'
+                    elm_extraction = 'Ni Cr Fe'
                 pot_path = os.path.join(os.getcwd(), pot_file, elm_name)
                 pot_fname = elm_name + '.meam'
-                pair_coeff_call = 'pair_coeff * * ' + os.path.join(pot_path,
-                                                                   'library.meam') + f' {elms.strip()} ' + os.path.join(
-                    pot_path, pot_fname) + f' {elms}'
+                pair_coeff_call = 'pair_coeff * * ' + os.path.join(pot_path, 'library.meam') + f' {elm_extraction} ' + os.path.join(pot_path, pot_fname) + f' {elms}'
             else:
                 pot_path = os.path.join(os.getcwd(), pot_file, 'NiFeCr.eam.alloy')
                 pair_coeff_call = 'pair_coeff * * ' + pot_path + f' {elms}'
@@ -211,9 +213,9 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_
 
         # run the simulation and get the energy
         if silent:
-            subprocess.call(f'{lammps_command} -in {os.path.join(lmp_task_dir, f"in.{name}_min")}'.split(' '), stdout=open(os.devnull, 'wb'))
+            subprocess.call([f'{lammps_command}', '-in', f'{os.path.join(lmp_task_dir, f"in.{name}_min")}'], stdout=open(os.devnull, 'wb'))
         else:
-            subprocess.call(f'{lammps_command} -in {os.path.join(lmp_task_dir, f"in.{name}_min")}'.split(' '))
+            subprocess.call([f'{lammps_command}', '-in', f'{os.path.join(lmp_task_dir, f"in.{name}_min")}'])
         initial_energy, final_energy = extract_initial_final_energy('log.lammps')
         initial_energies[name.split('.')[0]] = initial_energy
         final_energies[name.split('.')[0]] = final_energy
@@ -265,15 +267,19 @@ def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False, pot_type='meam'
         if pot_type == 'meam':
             if 'Fe' not in elms:
                 elm_name = 'NiCr'
+                elm_extraction = 'Ni Cr'
             elif 'Ni' not in elms:
                 elm_name = 'FeCr'
+                elm_extraction = 'Fe Cr'
             elif 'Cr' not in elms:
                 elm_name = 'NiFe'
+                elm_extraction = 'Ni Fe'
             else:
                 elm_name = 'NiCrFe'
+                elm_extraction = 'Ni Cr Fe'
             pot_path = os.path.join(os.getcwd(), pot_file, elm_name)
-            pot_fname = elm_name+'.meam'
-            pair_coeff_call = 'pair_coeff * * ' + os.path.join(pot_path, 'library.meam') + f' {elms.strip()} ' + os.path.join(pot_path, pot_fname) + f' {elms}'
+            pot_fname = elm_name + '.meam'
+            pair_coeff_call = 'pair_coeff * * ' + os.path.join(pot_path, 'library.meam') + f' {elm_extraction} ' + os.path.join(pot_path, pot_fname) + f' {elms}'
         else:
             pot_path = os.path.join(os.getcwd(), pot_file, 'NiFeCr.eam.alloy')
             pair_coeff_call = 'pair_coeff * * ' + pot_path + f' {elms}'
@@ -301,9 +307,9 @@ def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False, pot_type='meam'
         assert 'PREDICTIONTASKHERE' in os.listdir()
         # run the simulation
         if silent:
-            subprocess.call(f"{lammps_command} -in {os.path.join(os.getcwd(), 'in.elastic')}".split(' '), stdout=open(os.devnull, 'wb'))
+            subprocess.call([f'{lammps_command}', '-in', f"{os.path.join(os.getcwd(), 'in.elastic')}"], stdout=open(os.devnull, 'wb'))
         else:
-            subprocess.call(f"{lammps_command} -in {os.path.join(os.getcwd(), 'in.elastic')}".split(' '))
+            subprocess.call([f'{lammps_command}', '-in', f"{os.path.join(os.getcwd(), 'in.elastic')}"])
 
         # extract elastic_vector from the log file
         elastic_vector = extract_elastic_vector("log.lammps")

@@ -3,7 +3,7 @@ import numpy as np
 import ase
 from ase.io import read
 from io import StringIO
-from amir_lammps import convert_cif_to_lammps, lammps_data_to_cif, lmp_elastic_calculator, lmp_energy_calculator,\
+from amir_lammps import convert_cif_to_lammps, lammps_data_to_cif, lmp_elastic_calculator, lmp_energy_calculator, \
     lammps_pot, lammps_in
 import pandas as pd
 import copy
@@ -16,8 +16,11 @@ import random
 import yaml
 
 print(os.getcwd())
+
+
 class ASEMutation:
     POSSIBLE_ATOMS = [24, 26, 28]
+
     def __init__(self):
         pass
 
@@ -39,14 +42,16 @@ class Transposition(ASEMutation):
 
     def apply(self, atoms):
         atom_types = self.extr
-        atoms_used = np.random.sample(torch.arange(len(atom_types)), self.n_atoms*2)
+        atoms_used = np.random.sample(torch.arange(len(atom_types)), self.n_atoms * 2)
         for i, j in zip(atoms_used[::2], atoms_used[1::2]):
             atom_types[i], atom_types[j] = atom_types[j], atom_types[i]
+
 
 class Transmutation(ASEMutation):
     def __init__(self, n_atoms, probability):
         self.atom_types = 3
         self.possible_shifts = torch.arange(len())
+
 
 
 def struct_localsearch(cif_file, output_file):
@@ -91,14 +96,11 @@ def struct_localsearch(cif_file, output_file):
                     'prop': [],
                     'cif_lmp': []}
 
-
-
         cur_arr = np.array(atoms.numbers)
 
-
-        samples = [pair for pair in combinations(range(cur_arr.shape[0]), 2) if atoms.numbers[pair[0]] != atoms.numbers[pair[1]]]
+        samples = [pair for pair in combinations(range(cur_arr.shape[0]), 2) if
+                   atoms.numbers[pair[0]] != atoms.numbers[pair[1]]]
         samples = random.shuffle(samples)[:n_samples]
-
 
         for i, j in samples:
             arr = arr.copy()
@@ -152,7 +154,9 @@ def struct_localsearch(cif_file, output_file):
         print(f'step: {j}, best_step: {best_cif}, best_prop: {best_prop}')
 
 
-def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_vector', n_steps=20, n_samples=20, n_examples=100):
+
+def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_vector', n_steps=20, n_samples=20,
+                   n_examples=100):
     # setup
     cifs = []
     props = []
@@ -167,13 +171,13 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
     for i, ind in enumerate(processed_indices):
         patience = 0
         data = dataset.cached_data[ind]
-        new_datapoint = {'material_id': data['mp_id']+'L',
+        new_datapoint = {'material_id': data['mp_id'] + 'L',
                          'formation_energy_per_atom': data['ealstic_vector'],
                          'ealstic_vector': data['ealstic_vector'],
                          'sym': 'fcc' if data['phase'] == 0 else 1,
                          'pretty_formula': data['mp_id'].split('_')[0],
                          'cif': data['cif']}
-
+        add_to_dataset = False
         print(f'index: {ind}, i: {i}, phase: {new_datapoint["sym"]}')
         cif_str = data['cif']
         starting_prop = data['ealstic_vector']
@@ -213,7 +217,7 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
             for k, (l, m) in enumerate(samples):
                 print(f'k: {k}, i, j: {l, m}')
                 arr = cur_arr.copy()
-                #arr[l], arr[m] = arr[m], arr[l]
+                arr[l], arr[m] = arr[m], arr[l]
 
                 sampled_atoms = copy.deepcopy(atoms)
                 sampled_atoms.numbers = arr
@@ -254,8 +258,9 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
                     best_step_idx = filtered_step_data['index'][l]
                     print(f'step: {j}, best_step_prop: {best_step_prop}')
 
-            add_to_dataset = best_step_prop > best_prop and best_step_idx is not None
-            if add_to_dataset:
+            update_the_datapoint = best_step_prop > best_prop and best_step_idx is not None
+            if update_the_datapoint:
+                add_to_dataset = True  # if any improvement was made during any iteration, we add to the dataset
                 patience = 0
                 best_cif = out_cif[best_step_idx]
                 atoms = read(os.path.join(relaxed_cif_dir, str(best_step_idx) + '.cif'), format="cif")
@@ -274,11 +279,16 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
         result_record[i]['source_datapoint'] = i
         result_record[i]['added_to_dataset'] = add_to_dataset
 
-        if best_prop > starting_prop:
+        assert (best_prop > starting_prop) == add_to_dataset, 'Error in the implementation - best_prop > starting prop'\
+            ' should imply adding to the dataset'
+        # because best_prop starts as == starting_prop and the point is added to dataset if it improves at least once
+
+        if add_to_dataset:
             cifs.append(best_cif)
             props.append(best_prop)
             datapoint_indices.append(i)
             new_datapoints.append(new_datapoint)
+
     mean_prop = []
     mean_prop.append(np.mean([result_record[k]['starting_prop'] for k in np.arange(n_examples)]))
     for s in range(n_steps):
@@ -290,9 +300,9 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
     torch.save(result_record, os.path.join(out_directory, 'optimization_record'))
 
 
-
 if __name__ == '__main__':
-    out_file = torch.load('C:\\Users\\GrzegorzKaszuba\\PycharmProjects\\cdvae-main\\hydra\\singlerun\\2023-07-15\\cdvae_new_elastic\\retrain_exp2_max0p9\\3\\lammps_results')
+    out_file = torch.load(
+        'C:\\Users\\GrzegorzKaszuba\\PycharmProjects\\cdvae-main\\hydra\\singlerun\\2023-07-15\\cdvae_new_elastic\\retrain_exp2_max0p9\\3\\lammps_results')
     experiment_path = os.path.join(os.getcwd(), 'localsearch_experiment')
     os.makedirs(experiment_path, exist_ok=True)
     input_cif = out_file['cif_lmp'][35]
@@ -308,7 +318,6 @@ if __name__ == '__main__':
     cif_file = StringIO(input_cif)
     atoms = read(cif_file, format="cif")
     best_res = 0
-
 
     n_initializations = 5
     n_steps = 50
@@ -328,11 +337,11 @@ if __name__ == '__main__':
             os.makedirs(lammps_dir, exist_ok=True)
             relaxed_cif_dir = os.path.join(step_dir, 'relaxed_cif')
             os.makedirs(relaxed_cif_dir, exist_ok=True)
-            relaxed_lammps_dir =os.path.join(step_dir, 'relaxed_lammps')
+            relaxed_lammps_dir = os.path.join(step_dir, 'relaxed_lammps')
             step_res = {'initial_energies': [],
-                              'final_energies': [],
-                              'prop': [],
-                              'cif_lmp': []}
+                        'final_energies': [],
+                        'prop': [],
+                        'cif_lmp': []}
             for k in range(n_samples):
                 arr = np.array(atoms.numbers)
                 indices_0 = np.where(arr == 26)[0]
@@ -353,11 +362,12 @@ if __name__ == '__main__':
                     filename=os.path.join(cif_dir, f'{k}.cif'),
                     fmt='cif')
 
-
             lammpsdata = convert_cif_to_lammps(cif_dir, lammps_dir)
-            initial_energy, final_energy = lmp_energy_calculator(lammps_dir, relaxed_lammps_dir, lammps_cfg=lammps_cfg, silent=True)
+            initial_energy, final_energy = lmp_energy_calculator(lammps_dir, relaxed_lammps_dir, lammps_cfg=lammps_cfg,
+                                                                 silent=True)
             elastic = lmp_elastic_calculator(lammps_dir, lammps_cfg=lammps_cfg, silent=True)
-            out_cif = lammps_data_to_cif([f'{i}.data' for i in range(n_samples)], lammps_dir, relaxed_lammps_dir, savedir=relaxed_cif_dir)
+            out_cif = lammps_data_to_cif([f'{i}.data' for i in range(n_samples)], lammps_dir, relaxed_lammps_dir,
+                                         savedir=relaxed_cif_dir)
             structure_names = [n.split('.')[0] for n in
                                sorted(os.listdir(relaxed_lammps_dir), key=lambda s: int(re.search('\d+', s).group()))]
             initial_energies = [initial_energy[name] for name in structure_names]
@@ -377,7 +387,5 @@ if __name__ == '__main__':
                 if filtered_step_data['elastic_vectors'][l] > best_prop:
                     best_prop = filtered_step_data['elastic_vectors'][l]
                     best_cif = filtered_step_data['index'][l]
-            atoms = read(os.path.join(relaxed_cif_dir, str(best_cif)+'.data.cif'), format="cif")
+            atoms = read(os.path.join(relaxed_cif_dir, str(best_cif) + '.data.cif'), format="cif")
             print(f'init: {i}, step: {j}, best_step: {best_cif}, best_prop: {best_prop}')
-
-
