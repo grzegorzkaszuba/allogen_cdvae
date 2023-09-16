@@ -197,7 +197,7 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
         struct_dir = os.path.join(out_directory, str(i))
         os.makedirs(struct_dir, exist_ok=True)
         for j in range(n_steps):
-            print(f'step: {j}, starting:prop: {starting_prop}')
+            print(f'step: {j}, starting prop: {starting_prop}', f'best prop so far: {best_prop}')
             best_step_cif = best_cif
             best_step_prop = 0
             step_dir = os.path.join(struct_dir, str(j))
