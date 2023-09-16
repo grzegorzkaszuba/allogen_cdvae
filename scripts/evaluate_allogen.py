@@ -296,6 +296,8 @@ def main(args):
 
     with open('subprocess_calls.yaml', 'r') as file:
         lmp_path = yaml.safe_load(file).get('lammps_call')
+        if type(lmp_path) == str:
+            lmp_path = [lmp_path]
 
     lammps_cfg = {
         'lammps_path': lmp_path,

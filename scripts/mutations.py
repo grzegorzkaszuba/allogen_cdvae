@@ -63,6 +63,8 @@ def struct_localsearch(cif_file, output_file):
 
     with open('subprocess_calls.yaml', 'r') as file:
         lmp_path = yaml.safe_load(file).get('lammps_call')
+        if type(lmp_path) == str:
+            lmp_path = [lmp_path]
     lammps_cfg = {
         'lammps_path': lmp_path,
         'pot_file': lammps_pot,
@@ -309,6 +311,8 @@ if __name__ == '__main__':
 
     with open('subprocess_calls.yaml', 'r') as file:
         lmp_path = yaml.safe_load(file).get('lammps_call')
+        if type(lmp_path) == str:
+            lmp_path = [lmp_path]
     lammps_cfg = {
         'lammps_path': lmp_path,
         'pot_file': lammps_pot,

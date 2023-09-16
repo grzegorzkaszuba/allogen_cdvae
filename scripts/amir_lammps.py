@@ -213,9 +213,9 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_
 
         # run the simulation and get the energy
         if silent:
-            subprocess.call([f'{lammps_command}', '-in', f'{os.path.join(lmp_task_dir, f"in.{name}_min")}'], stdout=open(os.devnull, 'wb'))
+            subprocess.call(lammps_command + ['-in', f'{os.path.join(lmp_task_dir, f"in.{name}_min")}'], stdout=open(os.devnull, 'wb'))
         else:
-            subprocess.call([f'{lammps_command}', '-in', f'{os.path.join(lmp_task_dir, f"in.{name}_min")}'])
+            subprocess.call(lammps_command + ['-in', f'{os.path.join(lmp_task_dir, f"in.{name}_min")}'])
         initial_energy, final_energy = extract_initial_final_energy('log.lammps')
         initial_energies[name.split('.')[0]] = initial_energy
         final_energies[name.split('.')[0]] = final_energy
@@ -307,9 +307,9 @@ def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False, pot_type='meam'
         assert 'PREDICTIONTASKHERE' in os.listdir()
         # run the simulation
         if silent:
-            subprocess.call([f'{lammps_command}', '-in', f"{os.path.join(os.getcwd(), 'in.elastic')}"], stdout=open(os.devnull, 'wb'))
+            subprocess.call(lammps_command + ['-in', f"{os.path.join(os.getcwd(), 'in.elastic')}"], stdout=open(os.devnull, 'wb'))
         else:
-            subprocess.call([f'{lammps_command}', '-in', f"{os.path.join(os.getcwd(), 'in.elastic')}"])
+            subprocess.call(lammps_command + ['-in', f"{os.path.join(os.getcwd(), 'in.elastic')}"])
 
         # extract elastic_vector from the log file
         elastic_vector = extract_elastic_vector("log.lammps")
