@@ -337,8 +337,8 @@ def main(args):
 
         # ------------------- Localsearch with LAMMPS ---------------
         # localsearch params
-        n_steps = 3 # this is how many steps the algorithm will do
-        n_samples = 10 # this is how many transpositions the algorithm will check before picking the best one
+        n_steps = 20 # this is how many steps the algorithm will do
+        n_samples = 20 # this is how many transpositions the algorithm will check before picking the best one
         # note: it's not necessary that the highest n_samples translates to the best result - greed doesn't always pay
 
         datasets = [train, val, test]
