@@ -14,6 +14,7 @@ from pymatgen.core import Structure
 from conditions import Condition, filter_step_data
 import random
 import yaml
+import time
 
 print(os.getcwd())
 
@@ -156,10 +157,44 @@ def struct_localsearch(cif_file, output_file):
         print(f'step: {j}, best_step: {best_cif}, best_prop: {best_prop}')
 
 
+def simulate_ground_structure(atoms, struct_dir, lammps_cfg):
+    step_dir = os.path.join(struct_dir, 'ground_structure')
+    os.makedirs(step_dir, exist_ok=True)
+    cif_dir = os.path.join(step_dir, 'raw_cif')
+    os.makedirs(cif_dir, exist_ok=True)
+    lammps_dir = os.path.join(step_dir, 'raw_lammps')
+    os.makedirs(lammps_dir, exist_ok=True)
+    relaxed_cif_dir = os.path.join(step_dir, 'relaxed_cif')
+    os.makedirs(relaxed_cif_dir, exist_ok=True)
+    relaxed_lammps_dir = os.path.join(step_dir, 'relaxed_lammps')
+
+    lattice = atoms.get_cell()
+    species = atoms.get_chemical_symbols()
+    coords = atoms.get_scaled_positions()
+
+    structure = Structure(lattice, species, coords)
+    structure.to(
+        filename=os.path.join(cif_dir, 'g.cif'),
+        fmt='cif')
+
+    lammpsdata = convert_cif_to_lammps(cif_dir, lammps_dir)
+    initial_energy, final_energy = lmp_energy_calculator(lammps_dir, relaxed_lammps_dir, lammps_cfg=lammps_cfg,
+                                                         silent=True)
+    elastic = lmp_elastic_calculator(lammps_dir, lammps_cfg=lammps_cfg, silent=True)
+    out_cif = lammps_data_to_cif(['g'], lammps_dir, relaxed_lammps_dir,
+                                 savedir=relaxed_cif_dir)
+    structure_names = ['g']
+    initial_energies = [initial_energy[name] for name in structure_names]
+    final_energies = [final_energy[name] for name in structure_names]
+    elastic_vectors = [elastic[name] for name in structure_names]
+    prop_lmp = [el[3] for el in elastic_vectors]
+    return prop_lmp, initial_energies, final_energies
+
 
 def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_vector', n_steps=20, n_samples=20,
                    n_examples=100):
     # setup
+    starting_time = time.time()
     cifs = []
     props = []
     datapoint_indices = []
@@ -171,6 +206,7 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
     rs.shuffle(processed_points)
     processed_indices = processed_points[:n_examples]
     for i, ind in enumerate(processed_indices):
+        print(time.time() - starting_time)
         patience = 0
         data = dataset.cached_data[ind]
         new_datapoint = {'material_id': data['mp_id'] + 'L',
@@ -196,8 +232,10 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
         best_cif = cif_str
         struct_dir = os.path.join(out_directory, str(i))
         os.makedirs(struct_dir, exist_ok=True)
+        ground_prop, ground_energy_init, ground_energy_final = simulate_ground_structure(atoms, struct_dir, lammps_cfg)
+        print(f'Ground structure prop: {ground_prop}, initial energy: {ground_energy_init} final energy: {ground_energy_final}')
         for j in range(n_steps):
-            print(f'step: {j}, starting prop: {starting_prop}', f'best prop so far: {best_prop}')
+            print(f'step: {j}, starting prop: {starting_prop}', f'best prop so far: {best_prop}, formula: {new_datapoint["material_id"]}, {new_datapoint["pretty_formula"]}')
             best_step_cif = best_cif
             best_step_prop = 0
             step_dir = os.path.join(struct_dir, str(j))
@@ -217,7 +255,7 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
             samples = samples[:n_samples]
 
             for k, (l, m) in enumerate(samples):
-                print(f'k: {k}, i, j: {l, m}')
+                #print(f'k: {k}, i, j: {l, m}')
                 arr = cur_arr.copy()
                 arr[l], arr[m] = arr[m], arr[l]
 
@@ -288,7 +326,7 @@ def expand_dataset(dataset, out_directory, lammps_cfg, property_name='elastic_ve
         if add_to_dataset:
             cifs.append(best_cif)
             props.append(best_prop)
-            datapoint_indices.append(i)
+            datapoint_indices.append(ind)
             new_datapoints.append(new_datapoint)
 
     mean_prop = []

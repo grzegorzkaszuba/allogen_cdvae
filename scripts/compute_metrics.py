@@ -208,7 +208,7 @@ class RecEval(object):
     def get_gdist(self):
         def process_one(pred, gt, is_valid, use_lammps=False):
             if not is_valid:
-                return None, None
+                return -1, -1
         #try:
 
             gdist = gvect_distance(pred.structure, gt.structure, panna_cfg)
@@ -232,7 +232,7 @@ class RecEval(object):
                 gdists.append(gdist)
             if gdist_a is not None:
                 gdists_a.append(gdist_a)
-                print(f'\n\nmean gdist_a: {np.mean(gdists_a)} \n\n')
+                print(f'\n\nmean gdist_a: {np.mean(gdists_a)} mean gdist: {np.mean(gdists)}\n\n')
         gdists = np.array(gdists)
         gdists_a = np.array(gdists_a)
         return {'gdist': gdists,

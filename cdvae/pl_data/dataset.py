@@ -116,7 +116,7 @@ class CrystDataset(Dataset):
 
 
 class AdHocCrystDataset(Dataset):
-    def __init__(self, name, cif_data: list, prop_data, niggli, primitive,
+    def __init__(self, name, cif_data: list, prop_data, phase_data, niggli, primitive,
                  graph_method, preprocess_workers,
                  lattice_scale_method, **kwargs):
 
@@ -132,9 +132,9 @@ class AdHocCrystDataset(Dataset):
         self.prop = prop_name if prop_data is not None else None
         # construct df ad hoc
         if self.prop is None:
-            df_data = {'material_id': [i for i in range(len(cif_data))], 'cif': cif_data}
+            df_data = {'material_id': [i for i in range(len(cif_data))], 'cif': cif_data, 'phase': phase_data}
         else:
-            df_data = {'material_id': [i for i in range(len(cif_data))], 'cif': cif_data,  prop_name: prop_data}
+            df_data = {'material_id': [i for i in range(len(cif_data))], 'cif': cif_data,  prop_name: prop_data, 'phase': phase_data}
         self.df = pd.DataFrame(df_data)
         self.niggli = niggli
         self.primitive = primitive
@@ -171,7 +171,7 @@ class AdHocCrystDataset(Dataset):
         (frac_coords, atom_types, lengths, angles, edge_indices,
          to_jimages, num_atoms) = data_dict['graph_arrays']
         # scaler is set in DataModule set stage
-
+        phase = data_dict['phase']
         if self.scaler is not None and data_dict[self.prop] is not None:
             prop = self.scaler.transform(data_dict[self.prop])
 
@@ -190,6 +190,7 @@ class AdHocCrystDataset(Dataset):
                 num_bonds=edge_indices.shape[0],
                 num_nodes=num_atoms,  # special attribute used for batching in pytorch geometric
                 y=prop.view(1, -1),
+                phase=torch.Tensor(phase)
             )
 
         else:
@@ -204,6 +205,7 @@ class AdHocCrystDataset(Dataset):
                 num_atoms=num_atoms,
                 num_bonds=edge_indices.shape[0],
                 num_nodes=num_atoms,  # special attribute used for batching in pytorch geometric
+                phase=torch.Tensor(phase)
             )
         return data
 

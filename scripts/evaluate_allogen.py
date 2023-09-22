@@ -47,6 +47,8 @@ from ase.io import read
 from conditions import Condition, ZLoss, filter_step_data
 from mutations import Transposition, expand_dataset
 
+from structure_optimizer import StructureOptimizer
+
 
 def log_step_data(writer, filtered_step_data, step):
     for i in range(len(filtered_step_data['elastic_vectors'])):
@@ -81,7 +83,7 @@ def update_best_by_composition(best_by_composition, filtered_step_data):
         else:
             best_by_composition[filtered_step_data['summary_formulas'][i]] = filtered_step_data['elastic_vectors'][i]
 
-def get_trainer(cfg, dirpath, epochs=50):
+def get_trainer(cfg, savepath, epochs=50):
     trainer_args_dict = vars(cfg.train.pl_trainer).copy()
 
     # Remove keys starting with underscore
@@ -91,7 +93,7 @@ def get_trainer(cfg, dirpath, epochs=50):
 
     # Modify the max_epochs and default_root_dir parameters
     trainer_args_dict['max_epochs'] = epochs
-    trainer_args_dict['default_root_dir'] = dirpath
+    trainer_args_dict['default_root_dir'] = savepath
 
     # Now, we can pass all other parameters from cfg. For example:
     trainer_args_dict['logger'] = True
@@ -108,7 +110,7 @@ def get_trainer(cfg, dirpath, epochs=50):
     trainer.checkpoint_callback.monitor = 'val_loss'
     for callback in trainer.callbacks:
         if isinstance(callback, ModelCheckpoint):
-            callback.dirpath = dirpath
+            callback.dirpath = savepath
     return trainer
 
 
@@ -351,6 +353,25 @@ def main(args):
             shutil.copy(os.path.join(out_directory, 'dataset.csv'), os.path.join(new_dataset_path, dataset_name+'.csv'))
 
 
+
+    if 'opt' in args.tasks:
+        model, loaders, cfg = load_model_full(model_path)
+        model.to('cuda')
+        path_out = os.path.join(model_path, f'retrain_{args.label}')
+        optimizer = StructureOptimizer(cfg, lammps_cfg, ld_kwargs, args, path_out, loaders)
+        optimizer.step(model, loaders[2])
+
+
+    if 'opt_alternative_retrain':
+        model, loaders, cfg = load_model_full(model_path)
+        model.to('cuda')
+        path_out = os.path.join(model_path, f'retrain_{args.label}')
+        optimizer = StructureOptimizer(cfg, lammps_cfg, ld_kwargs, args, path_out, loaders)
+        adjusted_loader = optimizer.relabel_dataset(loaders[2])
+        trainer = optimizer.create_trainer(os.path.join(optimizer.path_out, 'calibration_initial'))
+        optimizer.calibrate_model(model, )
+        for i in range(5):
+            optimizer.step(model, loaders[2])
 
 
     if 'opt_retrain' in args.tasks:
@@ -604,8 +625,7 @@ def main(args):
             if best_model_path:
                 model.load_state_dict(torch.load(best_model_path)['state_dict'])
 
-            torch.save(step_data, os.path.join(pt_dir, 'full_batch.pt'))
-            torch.save(filtered_step_data, os.path.join(pt_dir, 'filtered_batch.pt'))
+
             # fc_properties, initial_energies, finala_energies, stepdir, structure_names
 
             # --------------- New datasets --------------------

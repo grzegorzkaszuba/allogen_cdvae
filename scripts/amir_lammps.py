@@ -159,7 +159,7 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_
 
     # Specify the lines to search for in the input file
     search_lines = ['pair_style', 'pair_coeff', 'read_data', 'wd']
-
+    is_first_file = True
     # minimise and save prop to file
     for name in file_names:
         with open(os.path.join(folder_path, name)) as file:
@@ -174,7 +174,7 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_
                     elm_extraction = 'Fe Cr'
                 elif 'Cr' not in elms:
                     elm_name = 'NiFe'
-                    elm_extraction = 'Ni Fe'
+                    elm_extraction = 'Fe Ni'
                 else:
                     elm_name = 'NiCrFe'
                     elm_extraction = 'Ni Cr Fe'
@@ -184,7 +184,9 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_
             else:
                 pot_path = os.path.join(os.getcwd(), pot_file, 'NiFeCr.eam.alloy')
                 pair_coeff_call = 'pair_coeff * * ' + pot_path + f' {elms}'
-
+        if is_first_file:
+            print(f'Elms: {elms}, pair coeff call: {pair_coeff_call}')
+            is_first_file = False
         modification_lines = [
             ('pair_style', f'pair_style {pot}'),
             ('pair_coeff', pair_coeff_call),
@@ -273,7 +275,7 @@ def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False, pot_type='meam'
                 elm_extraction = 'Fe Cr'
             elif 'Cr' not in elms:
                 elm_name = 'NiFe'
-                elm_extraction = 'Ni Fe'
+                elm_extraction = 'Fe Ni'
             else:
                 elm_name = 'NiCrFe'
                 elm_extraction = 'Ni Cr Fe'

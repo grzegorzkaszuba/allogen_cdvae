@@ -705,6 +705,7 @@ def preprocess_ad_hoc(df, num_workers, niggli, primitive, graph_method,
             'mp_id': row['material_id'],
             'cif': crystal_str,
             'graph_arrays': graph_arrays,
+            'phase': row['phase'],
         }
         result_dict.update(properties)
         return result_dict

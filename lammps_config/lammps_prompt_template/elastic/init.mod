@@ -17,4 +17,4 @@ boundary        p p p
 read_data	Cr_relaxed.lmp
 
 # Need to set mass to something, just to satisfy LAMMPS
-mass 1 1.0e-20
+# mass 1 1.0e-20
