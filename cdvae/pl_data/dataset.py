@@ -94,7 +94,7 @@ class CrystDataset(Dataset):
             if model is None:
                 raise ValueError('If you replace the scaler of the dataset, you must change the model scaler as well')
             else:
-                model.scaler = self.scaler
+                model.scaler = self.scaler.copy()
                 model.reinitialize_fc_property()
 
     def get_properties(self):

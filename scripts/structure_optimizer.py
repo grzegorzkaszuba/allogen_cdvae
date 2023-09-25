@@ -459,24 +459,26 @@ class StructureOptimizer:
             cr_triangle.plot(savedir=path, label=label)
         return cr_triangle
 
-    def relabel_dataset(self, loader):
+    def relabel_dataset(self, loader, model):
         new_loader = copy.deepcopy(loader) # gk the copy might slow down the loader!
         cr_triangle = self.get_data_triangle()
-        new_props = self.get_improvement_properties()
-        new_loader.dataset.relabel(new_props)
+        new_props = self.get_improvement_properties(new_loader)
+        new_loader.dataset.relabel(new_props, model=model)
+        return new_loader
 
 
     def calibrate_model(self, model, trainer_root, load_best=True):
         model.calibrate()
         model.is_calibrating = True
-        trainer_fit(model)
+        #trainer_fit(model)
         if not load_best:
             return model
+        '''
         else:
             ckpts = list(trainer.dirpath.glob('*.ckpt'))
             ckpt_epochs = np.array([int(ckpt.parts[-1].split('-')[0].split('=')[1]) for ckpt in ckpts])
             ckpt = str(ckpts[ckpt_epochs.argsort()[-1]])
-
+        '''
     def get_improvement_properties(self, loader, data_triangle=None):
         # takes a loader and computes the labels as improvement from the best compositions in DataTriangle
         if data_triangle is None:

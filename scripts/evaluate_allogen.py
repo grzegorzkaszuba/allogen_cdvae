@@ -362,14 +362,14 @@ def main(args):
         optimizer.step(model, loaders[2])
 
 
-    if 'opt_alternative_retrain':
+    if 'opt_alternative_retrain' in args.tasks:
         model, loaders, cfg = load_model_full(model_path)
         model.to('cuda')
         path_out = os.path.join(model_path, f'retrain_{args.label}')
         optimizer = StructureOptimizer(cfg, lammps_cfg, ld_kwargs, args, path_out, loaders)
-        adjusted_loader = optimizer.relabel_dataset(loaders[2])
+        adjusted_loader = optimizer.relabel_dataset(loaders[0], model=model)
         trainer = optimizer.create_trainer(os.path.join(optimizer.path_out, 'calibration_initial'))
-        optimizer.calibrate_model(model, )
+        optimizer.calibrate_model(model, adjusted_loader)
         for i in range(5):
             optimizer.step(model, loaders[2])
 
