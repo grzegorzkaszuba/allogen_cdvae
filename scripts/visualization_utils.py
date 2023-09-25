@@ -8,6 +8,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 from PIL import Image
+import io
 from io import BytesIO
 
 import matplotlib as mpl
@@ -71,6 +72,14 @@ def extract_atom_counts(cif_file, elements):
 
 
 def plot_atom_ratios_mpltern(atom_counts, property=None, writer=None, global_step=None, save_label=''):
+    plot_atom_ratios_input = {'atom_counts': atom_counts,
+                              'property': property,
+                              'global_step': global_step,
+                              'save_label': save_label}
+    torch.save(plot_atom_ratios_input, save_label + '_plotdata.pt')
+    return
+
+
     # Calculate atom ratios
     atom_ratios = [[count / sum(counts) for count in counts] for counts in atom_counts]
 

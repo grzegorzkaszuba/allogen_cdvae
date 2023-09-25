@@ -49,6 +49,32 @@ from conditions import Condition, ZLoss, filter_step_data
 from mutations import Transposition, expand_dataset
 
 
+def double_stack(nested_list2, dim1=None, dim2=None):
+    if dim1 is None:
+        unpacked1 = [torch.stack(nested_list2[i]) for i in range(len(nested_list2))]
+    else:
+        unpacked1 = [torch.cat(nested_list2[i], dim=dim1) for i in range(len(nested_list2))]
+    if dim2 is None:
+        unpacked2 = torch.stack(unpacked1)
+    else:
+        unpacked2 = torch.cat(unpacked1, dim=dim2)
+    return unpacked2
+
+
+def stack_output_batches(out_dict):
+    new_dict = {}
+    new_dict['eval_setting'] = out_dict['eval_setting']
+    new_dict['frac_coords'] = double_stack(out_dict['frac_coords'], dim1=0, dim2=1)
+    new_dict['num_atoms'] = double_stack(out_dict['num_atoms'], dim1=0, dim2=1)
+    new_dict['atom_types'] = double_stack(out_dict['atom_types'], dim1=0, dim2=1)
+    new_dict['lengths'] = double_stack(out_dict['lengths'], dim1=0, dim2=1)
+    new_dict['angles'] = double_stack(out_dict['angles'], dim1=0, dim2=1)
+    new_dict['ld_kwargs'] = out_dict['ld_kwargs']
+    new_dict['z'] = torch.cat(out_dict['z'], dim=1)
+    new_dict['cif'] = out_dict['cif']
+    new_dict['fc_properties'] = torch.cat(out_dict['fc_properties'], dim=1)
+    new_dict['fc_comp'] = torch.cat(out_dict['fc_comp'], dim=1)
+
 def merge_datasets_cryst(dataset1, dataset2):
     # Merge the two lists
     new_dataset = copy.deepcopy(dataset1)
@@ -243,24 +269,24 @@ class StructureOptimizer:
         all_fc_comp = []
         starting_data = []
         for n, batch in enumerate(loader):
-            batch_output, n_generated_structures = self.batch_step(n, batch, cif_dir, model, existing_structures)
+            batch_output, n_generated_structures, breakpoints = self.batch_step(n, batch, cif_dir, model, existing_structures)
             all_fc_properties.append(batch_output['fc_properties'])
             all_fc_comp.append(batch_output['fc_comp'])
             for k, v in batch_output.items():
                 output_dict[k].append(batch_output[k])
             existing_structures += n_generated_structures
 
+        #compact_dict = stack_output_batches(output_dict)
+
         torch.save(output_dict, os.path.join(pt_dir, 'data.pt'))
+        #torch.save(compact_dict, os.path.join(pt_dir, 'data2.pt'))
 
-        cif_data = []
-        for batch_cif in output_dict['cif']:
-            for cif_str in batch_cif[0]:
-                cif_data.append(cif_str)
+        #output_dict = stack_output_batches(output_dict)
 
-        self.calculate_lammps(cif_data, stepdir, all_fc_properties, all_fc_comp)
+        self.calculate_lammps(stepdir, all_fc_properties, all_fc_comp)
 
 
-    def calculate_lammps(self, cif_list, stepdir, all_fc_properties, all_fc_comp):
+    def calculate_lammps(self, stepdir, all_fc_properties, all_fc_comp):
         # directory setup
 
         cif_dir = os.path.join(stepdir, 'cif_raw')
@@ -300,15 +326,13 @@ class StructureOptimizer:
                           'summary_formulas': summary_formulas}
         torch.save(lammps_results, os.path.join(pt_dir, 'lammps_results.pt'))
         # ------------- Step logging ----------------
-        step_fc_properties = []
-        for fc in all_fc_properties:
-            step_fc_properties = step_fc_properties + fc.reshape(-1).tolist()
-        step_fc_comp = []
-        for fc in all_fc_comp:
-            step_fc_comp = step_fc_comp + fc.reshape(-1, 3).tolist()
+        step_fc_properties = torch.cat(all_fc_properties,dim=1)[:, :, 0].T.tolist()
+
+
+        step_fc_properties = torch.cat(all_fc_properties, dim=1)
+
         fc_errors = [abs(step_fc_properties[i] - prop_lmp[i]) for i in range(len(step_fc_properties))]
         step_data = {'fc_properties': step_fc_properties,
-                     'fc_comp': step_fc_comp,
                      'initial_energies': initial_energies,
                      'final_energies': final_energies,
                      'structure_names': structure_names,
@@ -341,8 +365,8 @@ class StructureOptimizer:
         step = self.current_step
         opt_out, z, fc_properties, optimization_breakpoints, cbf, fc_comp = \
             optimization_by_batch(model, self.ld_kwargs, self.exp_cfg, batch,
-                                  num_starting_points=100, num_gradient_steps=500, lr=1e-3, num_saved_crys=10,
-                                  extra_returns=True, maximize=True)
+                                  num_starting_points=100, num_gradient_steps=5000, lr=1e-3, num_saved_crys=1,
+                                  extra_returns=True, maximize=True, extra_breakpoints=(200, 500))
 
         n_generated_structures = batch.num_atoms.cpu().shape[0]
         chonker = opt_chunk_generator(opt_out, n_generated_structures)
@@ -388,7 +412,7 @@ class StructureOptimizer:
                 batch_output[k].append(step_output[k])
 
         #torch.save(output_dict, os.path.join(pt_dir, 'data.pt'))
-        return batch_output, n_generated_structures
+        return batch_output, n_generated_structures, optimization_breakpoints
 
 
 

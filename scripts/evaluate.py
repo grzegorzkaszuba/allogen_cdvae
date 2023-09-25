@@ -291,6 +291,8 @@ def main(args):
         print('Evaluate model on the generation task.')
         start_time = time.time()
 
+
+
         (frac_coords, num_atoms, atom_types, lengths, angles,
          all_frac_coords_stack, all_atom_types_stack) = generation(
             model, ld_kwargs, args.num_batches_to_samples, args.num_evals,
