@@ -326,10 +326,9 @@ class StructureOptimizer:
                           'summary_formulas': summary_formulas}
         torch.save(lammps_results, os.path.join(pt_dir, 'lammps_results.pt'))
         # ------------- Step logging ----------------
-        step_fc_properties = torch.cat(all_fc_properties,dim=1)[:, :, 0].T.tolist()
+        step_fc_properties = torch.cat(all_fc_properties, dim=1)[:, :, 0].T.reshape(-1).tolist()
 
 
-        step_fc_properties = torch.cat(all_fc_properties, dim=1)
 
         fc_errors = [abs(step_fc_properties[i] - prop_lmp[i]) for i in range(len(step_fc_properties))]
         step_data = {'fc_properties': step_fc_properties,
@@ -341,10 +340,10 @@ class StructureOptimizer:
                      'index': list(range(len(prop_lmp))),
                      'fc_errors': fc_errors}
 
-
+        torch.save(step_data, os.path.join(pt_dir, 'full_batch.pt'))
 
         filtered_step_data = filter_step_data(step_data, self.CONDITIONS)
-        log_step_data(self.writer, filtered_step_data, self.current_step)
+        torch.save(filtered_step_data, os.path.join(pt_dir, 'filtered_batch.pt'))
         self.capture_best_from_step_data(filtered_step_data)
 
         plot_atom_ratios_mpltern(filtered_step_data['summary_formulas'],
@@ -352,8 +351,8 @@ class StructureOptimizer:
                                  save_label=os.path.join(self.path_out, f'tri_step {self.current_step}'))
 
 
-        torch.save(step_data, os.path.join(pt_dir, 'full_batch.pt'))
-        torch.save(filtered_step_data, os.path.join(pt_dir, 'filtered_batch.pt'))
+        log_step_data(self.writer, filtered_step_data, self.current_step)
+
         self.current_step += 1
         #recalibration reimplemented
 
@@ -366,7 +365,7 @@ class StructureOptimizer:
         opt_out, z, fc_properties, optimization_breakpoints, cbf, fc_comp = \
             optimization_by_batch(model, self.ld_kwargs, self.exp_cfg, batch,
                                   num_starting_points=100, num_gradient_steps=5000, lr=1e-3, num_saved_crys=1,
-                                  extra_returns=True, maximize=True, extra_breakpoints=(200, 500, 1000, 1500, 2500))
+                                  extra_returns=True, maximize=True, extra_breakpoints=(200, 500, 1000, 1500, 2500, 3500, 5000))
 
         n_generated_structures = batch.num_atoms.cpu().shape[0]
         chonker = opt_chunk_generator(opt_out, n_generated_structures)
