@@ -341,7 +341,7 @@ class StructureOptimizer:
         step = self.current_step
         opt_out, z, fc_properties, optimization_breakpoints, cbf, fc_comp = \
             optimization_by_batch(model, self.ld_kwargs, self.exp_cfg, batch,
-                                  num_starting_points=100, num_gradient_steps=500, lr=1e-3, num_saved_crys=1,
+                                  num_starting_points=100, num_gradient_steps=500, lr=1e-3, num_saved_crys=10,
                                   extra_returns=True, maximize=True)
 
         n_generated_structures = batch.num_atoms.cpu().shape[0]

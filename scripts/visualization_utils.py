@@ -4,8 +4,15 @@ from pymatgen.io.ase import AseAtomsAdaptor
 from pymatgen.core.periodic_table import Element
 from ase.visualize import view
 
+import torch
+from torch.utils.tensorboard import SummaryWriter
+import numpy as np
+from PIL import Image
+from io import BytesIO
+
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+mpl.use('Agg')
 
 import re
 
@@ -60,12 +67,7 @@ def extract_atom_counts(cif_file, elements):
         emergency_out[0] = -1
         return tuple(emergency_out)
 
-import matplotlib.pyplot as plt
-#import mpltern
-import numpy as np
-from torch.utils.tensorboard import SummaryWriter
-from PIL import Image
-import io
+
 
 """
 def plot_atom_ratios_mpltern(atom_counts, property=None, writer=None, global_step=None, save_label=''):
@@ -147,12 +149,7 @@ def save_scatter_plot(pred, label, writer, name, plot_title=None):
     plt.show()
 
 
-import torch
-from torch.utils.tensorboard import SummaryWriter
-import matplotlib.pyplot as plt
-import numpy as np
-from PIL import Image
-from io import BytesIO
+
 
 # Create a tensor of floats with shape 10, 128
 data = torch.rand(10, 128)

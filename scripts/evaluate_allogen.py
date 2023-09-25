@@ -360,7 +360,9 @@ def main(args):
         model.to('cuda')
         path_out = os.path.join(model_path, f'retrain_{args.label}')
         optimizer = StructureOptimizer(cfg, lammps_cfg, ld_kwargs, args, path_out, loaders)
+        t = time.time()
         optimizer.step(model, loaders[2])
+        print('TASK DURATION:', time.time()-t)
 
 
     if 'opt_alternative_retrain' in args.tasks:
