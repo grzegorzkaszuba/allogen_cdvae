@@ -69,7 +69,7 @@ def extract_atom_counts(cif_file, elements):
 
 
 
-"""
+
 def plot_atom_ratios_mpltern(atom_counts, property=None, writer=None, global_step=None, save_label=''):
     # Calculate atom ratios
     atom_ratios = [[count / sum(counts) for count in counts] for counts in atom_counts]
@@ -119,7 +119,7 @@ def plot_atom_ratios_mpltern(atom_counts, property=None, writer=None, global_ste
         # Show plot
         plt.savefig(save_label + '.png')
         plt.close(fig)
-"""
+
 
 def save_scatter_plot(pred, label, writer, name, plot_title=None):
     if plot_title is None:

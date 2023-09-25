@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 from eval_utils import load_model, load_model_full, tensors_to_structures, load_model_data
 from visualization_utils import save_scatter_plot, cif_names_list, extract_atom_counts
-#from visualization_utils import plot_atom_ratios_mpltern
+from visualization_utils import plot_atom_ratios_mpltern
 from amir_lammps import lammps_pot, lammps_in, convert_cif_to_lammps, lammps_data_to_cif, lmp_energy_calculator, \
     lmp_elastic_calculator
 
@@ -599,10 +599,10 @@ def main(args):
             filtered_step_data = filter_step_data(step_data, conditions)
             log_step_data(writer, filtered_step_data, step)
             update_best_by_composition(best_by_composition, filtered_step_data)
-            """plot_atom_ratios_mpltern(filtered_step_data['summary_formulas'],
+            plot_atom_ratios_mpltern(filtered_step_data['summary_formulas'],
                                      property=filtered_step_data['elastic_vectors'],
                                      save_label=os.path.join(path_out, f'tri_step {step}'))
-            """
+
 
             # ------------------------ Recalibration ------------------------
 
@@ -667,11 +667,11 @@ def main(args):
         for k, v in best_by_composition.items():
             final_comps.append(k)
             final_props.append(v)
-        """
+
         plot_atom_ratios_mpltern(final_comps,
                                  final_props,
                                  save_label=os.path.join(path_out, f'tri final'))
-        """
+
 
 
 if __name__ == '__main__':
