@@ -13,7 +13,7 @@ from io import BytesIO
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-mpl.use('Agg')
+#mpl.use('Agg')
 
 import re
 

@@ -366,7 +366,7 @@ class StructureOptimizer:
         opt_out, z, fc_properties, optimization_breakpoints, cbf, fc_comp = \
             optimization_by_batch(model, self.ld_kwargs, self.exp_cfg, batch,
                                   num_starting_points=100, num_gradient_steps=5000, lr=1e-3, num_saved_crys=1,
-                                  extra_returns=True, maximize=True, extra_breakpoints=(200, 500))
+                                  extra_returns=True, maximize=True, extra_breakpoints=(200, 500, 1000, 1500, 2500))
 
         n_generated_structures = batch.num_atoms.cpu().shape[0]
         chonker = opt_chunk_generator(opt_out, n_generated_structures)
