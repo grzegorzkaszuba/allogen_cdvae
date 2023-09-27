@@ -100,6 +100,26 @@ class DataTriangle:
         if savedir:
             plt.savefig(os.path.join(savedir, 'dt_plot' + label))
 
+    def plot_against(self, other, savedir=None, label='', show=False):
+        # Triangle border
+        triangle = Polygon([[0, 0], [0.5, self.sqrt3 / 2], [1, 0]], closed=True, fill=False, edgecolor='k')
+
+        plt.figure()
+        plt.gca().add_patch(triangle)
+        plt.plot(self.x, self.y, 'ko', markersize=2)
+        Xi, Yi = np.meshgrid(np.linspace(0, 1, 200), np.linspace(0, self.sqrt3 / 2, 200))
+        Zi = self.interpolator(Xi, Yi)
+        oZi = other.interpolator(Xi, Yi)
+        im = plt.imshow(Zi-oZi, extent=(0, 1, 0, self.sqrt3 / 2), origin='lower', cmap=cm.viridis)
+        plt.axis('equal')
+        plt.xlim(0, 1)
+        plt.ylim(0, self.sqrt3 / 2)
+        cbar = plt.colorbar(im)
+        cbar.set_label('Interpolated Value', rotation=270, labelpad=15)
+        if show:
+            plt.show()
+        if savedir:
+            plt.savefig(os.path.join(savedir, 'dt_plot' + label))
 
     def get_value(self, coordinates):
         coordinates = self.format_coordinates(coordinates)
