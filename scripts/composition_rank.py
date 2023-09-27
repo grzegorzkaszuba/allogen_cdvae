@@ -110,7 +110,7 @@ class DataTriangle:
         Xi, Yi = np.meshgrid(np.linspace(0, 1, 200), np.linspace(0, self.sqrt3 / 2, 200))
         Zi = self.interpolator(Xi, Yi)
         oZi = other.interpolator(Xi, Yi)
-        im = plt.imshow(Zi-oZi, extent=(0, 1, 0, self.sqrt3 / 2), origin='lower', cmap=cm.viridis)
+        im = plt.imshow(np.maximum(Zi-oZi, 0), extent=(0, 1, 0, self.sqrt3 / 2), origin='lower', cmap=cm.viridis)
         plt.axis('equal')
         plt.xlim(0, 1)
         plt.ylim(0, self.sqrt3 / 2)

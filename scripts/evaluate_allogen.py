@@ -366,17 +366,25 @@ def main(args):
 
 
     if 'calibration_opt' in args.tasks:
+        print('CALIBRATION OPT STARTING')
         model, loaders, cfg = load_model_full(model_path)
+        print('MODEL LOADED')
         path_out = os.path.join(model_path, f'calibration_{args.label}')
         ckpt_path = os.path.join(path_out, 'initial_calibration')
         os.makedirs(ckpt_path, exist_ok=True)
+        print('PATHS_CREATED')
         optimizer = StructureOptimizer(cfg, lammps_cfg, ld_kwargs, args, path_out, loaders)
+        print('STARTING RELABELING')
         adjusted_train = optimizer.relabel_dataset(loaders[0], model=model)
         adjusted_val = optimizer.relabel_dataset(loaders[1], model=model)
+        print('RELABELLED, GETTING TRAINED')
         trainer = optimizer.create_trainer(ckpt_path)
+        print('TRAINED CREATED, CALIBRATION')
         optimizer.calibrate_model(model, trainer, adjusted_train, adjusted_val, load_best=True)
+        print('CALIBRATED')
         model.to('cuda')
         t = time.time()
+        print('STARTING OPTIMIZATION')
         optimizer.step(model, loaders[2])
         print('TASK DURATION:', time.time()-t)
 
