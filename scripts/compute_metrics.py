@@ -1,3 +1,4 @@
+import copy
 from collections import Counter
 import argparse
 import os
@@ -25,6 +26,8 @@ from gvect_utils import cif_to_json, modify_gvec, panna_cfg, gvector, gvect_dist
 
 from pymatgen.core.structure import Structure
 from pymatgen.core.lattice import Lattice
+
+from copy import deepcopy
 
 from eval_utils import (
     smact_validity, structure_validity, CompScaler, get_fp_pdist,
@@ -87,13 +90,16 @@ def save_metrics(metric_dictionary, difficulties, path, label=None, colour=None)
     """
     # Create directory if it doesn't exist
     os.makedirs(path, exist_ok=True)
-
+    metric_dictionary_saved = copy.deepcopy(metric_dictionary)
+    metric_dictionary_saved['valid_examples'] = difficulties.shape[0]
+    torch.save(metric_dictionary_saved, os.path.join(path, 'metrics.pt'))
     # Compute means of metrics and save as a dictionary
+    metric_dictionary = {k: v[v>1] for k, v in metric_dictionary.items()}
     mean_metrics = {key: np.mean(value) for key, value in metric_dictionary.items()}
-
+    metric_dictionary['validity'] = difficulties.shape[0]/metric_dictionary_saved['gdist'].shape[0]
     # Save the mean metrics as a PyTorch file
     torch.save(mean_metrics, os.path.join(path, 'mean_metrics.pt'))
-    torch.save(metric_dictionary, os.path.join(path, 'metrics.pt'))
+
 
     # For each metric, create scatter plots of score vs difficulty
     for metric_name, scores in metric_dictionary.items():

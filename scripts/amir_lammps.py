@@ -126,7 +126,7 @@ def modify_file(file_path, lines_to_search, replacement_lines):
                     if replace_line[0] == line:
                         lines[i] = replace_line[1] + "\n"
     return lines
-def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_type='meam'):
+def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_type='meam', print_progress=False):
     """minimises the structures and calculates the energy"""
     (pot, pot_file, lammps_command, lammps_inputs_dir) = (
         lammps_cfg['pot'],
@@ -161,7 +161,11 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_
     search_lines = ['pair_style', 'pair_coeff', 'read_data', 'wd']
     is_first_file = True
     # minimise and save prop to file
+    ctr = 0
     for name in file_names:
+        if print_progress:
+            print(ctr)
+            ctr+=1
         with open(os.path.join(folder_path, name)) as file:
             lines = file.readlines()
             elms = lines[0]
@@ -228,7 +232,7 @@ def lmp_energy_calculator(source_dir, target_dir, lammps_cfg, silent=False, pot_
     #return prop, df
     return initial_energies, final_energies
 
-def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False, pot_type='meam'):
+def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False, pot_type='meam', print_progress=False):
     """minimises the structures and calculates the elastic vector"""
 
     (pot, pot_file, lammps_command, lammps_inputs_dir) = (
@@ -261,7 +265,12 @@ def lmp_elastic_calculator(source_dir, lammps_cfg, silent=False, pot_type='meam'
     search_lines_init = ['read_data']
     search_lines_pot = ['pair_style', 'pair_coeff']
 
+
+    ctr = 0
     for name in file_names:
+        if print_progress:
+            print(ctr)
+            ctr+=1
         with open(os.path.join(folder_path, name)) as file:
             lines = file.readlines()
             elms = lines[0]

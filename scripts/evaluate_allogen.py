@@ -155,7 +155,7 @@ def optimization_by_batch(model, ld_kwargs, exp_cfg, batch,
     if batch is not None:
         batch = batch.to(model.device)
         _, _, z = model.encode(batch)
-        z = z[:num_starting_points].detach().clone()
+        z = z.detach().clone()
         z.requires_grad = True
     else:
         z = torch.randn(num_starting_points, model.hparams.hidden_dim,
@@ -365,17 +365,20 @@ def main(args):
         print('TASK DURATION:', time.time()-t)
 
 
-    if 'opt_alternative_retrain' in args.tasks:
+    if 'calibration_opt' in args.tasks:
         model, loaders, cfg = load_model_full(model_path)
-        model.to('cuda')
-        path_out = os.path.join(model_path, f'retrain_{args.label}')
+        path_out = os.path.join(model_path, f'calibration_{args.label}')
+        ckpt_path = os.path.join(path_out, 'initial_calibration')
+        os.makedirs(ckpt_path, exist_ok=True)
         optimizer = StructureOptimizer(cfg, lammps_cfg, ld_kwargs, args, path_out, loaders)
-        adjusted_loader = optimizer.relabel_dataset(loaders[0], model=model)
-        trainer = optimizer.create_trainer(os.path.join(optimizer.path_out, 'calibration_initial'))
-        optimizer.calibrate_model(model, adjusted_loader)
-        for i in range(5):
-            optimizer.step(model, loaders[2])
-
+        adjusted_train = optimizer.relabel_dataset(loaders[0], model=model)
+        adjusted_val = optimizer.relabel_dataset(loaders[1], model=model)
+        trainer = optimizer.create_trainer(ckpt_path)
+        optimizer.calibrate_model(model, trainer, adjusted_train, adjusted_val, load_best=True)
+        model.to('cuda')
+        t = time.time()
+        optimizer.step(model, loaders[2])
+        print('TASK DURATION:', time.time()-t)
 
     if 'opt_retrain' in args.tasks:
         model, loaders, cfg = load_model_full(model_path)

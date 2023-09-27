@@ -20,6 +20,7 @@ from torch.utils.tensorboard import SummaryWriter
 from pymatgen.io.cif import CifWriter
 import shutil
 import yaml
+from pathlib import Path
 
 import math
 from statistics import mean
@@ -88,13 +89,13 @@ def initialize_exp_cfg(atomic_symbols: List[str]) -> dict:
             'atom_indices': atom_indices}
 
 def optimization_by_batch(model, ld_kwargs, exp_cfg, batch,
-                          num_starting_points=100, num_gradient_steps=5000,
+                          num_starting_points=1000, num_gradient_steps=5000,
                           lr=1e-3, num_saved_crys=10, extra_returns=False, extra_breakpoints=(),
                           maximize=False, z_losses=()):
     if batch is not None:
         batch = batch.to(model.device)
         _, _, z = model.encode(batch)
-        z = z[:num_starting_points].detach().clone()
+        z = z.detach().clone()
         z.requires_grad = True
     else:
         z = torch.randn(num_starting_points, model.hparams.hidden_dim,
@@ -364,7 +365,7 @@ class StructureOptimizer:
         step = self.current_step
         opt_out, z, fc_properties, optimization_breakpoints, cbf, fc_comp = \
             optimization_by_batch(model, self.ld_kwargs, self.exp_cfg, batch,
-                                  num_starting_points=100, num_gradient_steps=5000, lr=1e-3, num_saved_crys=1,
+                                  num_starting_points=1000, num_gradient_steps=5000, lr=1e-3, num_saved_crys=1,
                                   extra_returns=True, maximize=True, extra_breakpoints=(200, 500, 1000, 1500, 2500, 3500, 5000))
 
         n_generated_structures = batch.num_atoms.cpu().shape[0]
@@ -417,7 +418,7 @@ class StructureOptimizer:
 
 
 
-    def create_trainer(self, savepath, epochs=50):
+    def create_trainer(self, savepath, epochs=200):
         cfg = self.cfg
         trainer_args_dict = vars(cfg.train.pl_trainer).copy()
 
@@ -493,18 +494,19 @@ class StructureOptimizer:
         return new_loader
 
 
-    def calibrate_model(self, model, trainer_root, load_best=True):
+    def calibrate_model(self, model, trainer, train, val, load_best=True):
         model.calibrate()
         model.is_calibrating = True
-        #trainer_fit(model)
+        trainer.fit(model, train_dataloader=train, val_dataloaders=val)
         if not load_best:
-            return model
-        '''
+            return
         else:
-            ckpts = list(trainer.dirpath.glob('*.ckpt'))
+            a = 5
+            ckpts = list(Path(trainer.default_root_dir).glob('*.ckpt'))
             ckpt_epochs = np.array([int(ckpt.parts[-1].split('-')[0].split('=')[1]) for ckpt in ckpts])
             ckpt = str(ckpts[ckpt_epochs.argsort()[-1]])
-        '''
+            state_dict = torch.load(ckpt)['state_dict']
+            model.load_state_dict(state_dict)
     def get_improvement_properties(self, loader, data_triangle=None):
         # takes a loader and computes the labels as improvement from the best compositions in DataTriangle
         if data_triangle is None:
