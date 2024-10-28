@@ -11,7 +11,6 @@ from PIL import Image
 import io
 from io import BytesIO
 
-import mpltern
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 mpl.use('Agg')

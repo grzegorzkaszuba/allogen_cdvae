@@ -19,8 +19,9 @@ hydra:
       WANDB_START_METHOD: thread
       WANDB_DIR: ${oc.env:WABDB_DIR}
 
+
 defaults:
-  - data: default
+  - data: elastic_final
   - logging: default
   - model: vae
   - optim: default

@@ -1,0 +1,2 @@
+The directories inside contain all the independent data from the base set and the one produced for augmentation.
+CDVAE will use the outside csv files only - they are merged base and aug examples - except for the test set, which is still computing.

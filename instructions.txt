@@ -1,0 +1,46 @@
+
+
+Firstly, a model can be training by root/run.py. The configs provided are sufficient to train CDVAE and P-CDVAE, either on the randomly-generated data or the dataset with addition of structures optimized with local search. Another script runs the metrics.
+
+1. Getting started:
+a) Install requirements
+b) In order to use the repository, please first do the following:
+- adjust the content of .env_template to our file system and rename to .env,
+- rename data_template to data,
+- rename conf_template to conf
+c) To generate and optimize structures, either with the neural model or local search, LAMMPS needs to be configured. The package uses subprocess.call to invoke LAMMPS. Notably, for evaluation with G-vectors, a PANNA call is invoked with Python through subprocess. After installing lammps, configure your subprocess_calls calls for Python and LAMMPS to run generation experiments. Rename from subprocess_calls_template.yaml to subprocess_calls.yaml. Further information on LAMMPS configuration can be found in LAMMPS_guide.md
+
+2. Training models
+a) Randomly generated data:
+To control which experiment to conduct, choose the appropriate config_file inside run.py (change from "default.yaml") and run cdvae/run.py. Available configs can be viewed in conf. For CDVAE or P-CDVAE with ramdonly-generated data, the only step needed is to set config file to "cdvae_base_data.yaml" or "pcdvae_base_data.yaml".
+
+b) Optimized data: to use data enriched with optimized structures, we recommend a two-step approach. First, run the "step-1" training of the appropriate model, e.g. pcdave_optimized_s1, which trains the model for 2500 epochs with basic data. Once that is finished, replace the data with the optimized data and extend the training to 5000 epochs by entering the output directory and manually changing the config inside .hydra:
+data:
+  elastic_final -> elastic_aug
+  max_training_epochs 2500 -> 5000	  
+Then run the script again, without changing the config file (e.g. pcdvae_optimized_s1) - the _s2 is there only to convey the changes that need to be done manually inside output directory - the output file has the priority over "cfg" directory once the output directory has been created.
+
+3. Using models
+a) Optimize: To use the train model to optimize existing structures, run scripts/evaluate_allogen.py with following parameters:
+--model_path [absolute_path_to/output_directory] -tasks opt
+For output directory of the model, always consider the directory in which the checkpoints, .hydra etc. reside.
+b) Reconstruction: To generate structures from their encodings, run scripts/evaluate.py with following parameters:
+--model_path [absolute_path_to/output_directory] --tasks recon
+Once the outputs have been generated, evaluate.py can be used to validate them.
+c) Other tasks: two more variants of optimization have been proposed: one that dynamically retrains the feature predictor to promote variety of generated structures, and one that utilizes the newly generated data to re-train the entire model: these have not been explored in the paper and their optimal parametrization remains an open question.
+
+4. Evaluating results
+Once output structures have been generate them, one can evaluate them with compute_metrics.py. The script has been modified to adapt different metrics, as described in the paper. This script requires the usage of PANNA subprocesses.
+
+5. Other scripts
+a) in order to generate data optimized with local search on your own, you also need to use a post-training script. In order to do that conveniently, start by calling run.py with localsearch.yaml. For convenience, this will run a single epoch of training and create a base directory, e.g. hydra/singlerun/localsearch_dir. To conduct local search, run evaluate_allogen.py with following parameters:
+--model_path [absolute_path_to/localsearch_dir] --tasks local_search_dataset --label [optional_name]
+
+
+
+Training stability
+The training on "optimized" dataset displays stability issues: as the model performs preliminary fit, it tends to raise an error. The optimized dataset was employed by first training for 2500 epochs on the basic dataset, and then following up with the mixed dataset that contains both the randomly generated and optimized structures. We attribute this to the heterogeneous character of the dataset (small inclusion of optimized structures). An alternative workaround to overcome the issues of early training is to use iterated_run.py instead of run.py. This script invokes run.py multiple times in case of numerical errors that happen in the early training stages.
+
+
+The list of scripts that use subprocess calls:
+lammps_calls; gvect utils; iterated run;
